@@ -46,3 +46,9 @@ Android (Kotlin + Jetpack Compose, Canvas 自绘 K 线) → **自建小后端**�
 - 校验复用 `TpSlValidator`：Buy Limit < Ask、Sell Limit > Bid、Buy Stop > Ask、Sell Stop < Bid（含最小止损距离）；移动开仓价时 TP/SL 价格保持不变，若因此失效则提示中文错误且不发送。
 - 手势优先级：✕ 平仓按钮 > TP/SL 编辑线 > 挂单线 > 平移/缩放；挂单线与持仓线冲突时更近者优先（点击持仓线仍弹平仓面板）；水平移动仍是平移。
 - 逻辑在 `ui/OrderLines.kt`（纯函数，含测试 `OrderDragTest.kt`）；演示模式同样可用；网页演示 `demo/index.html` 已同步（`?view=v9confirm` / `v9invalid`）。
+
+## 2026-10-27 v12：支持 HTTPS（自签名证书指纹固定）
+- 服务端：`SSL_CERTFILE` / `SSL_KEYFILE`（`.env`）启用 TLS，未设置仍为 http；`mt5-bridge.exe --make-cert <IP>`（或 `server/make-cert.py <IP>`）生成约 10 年自签名证书（SAN 含该 IP）并打印 SHA-256 指纹。步骤见 `server/README.md` 4.1。
+- App：地址可填 `https://…`（ws/wss 由 http/https 推导）；设置新增“HTTPS 证书指纹 (SHA-256)”。https + 指纹 → 只信任叶子证书 SHA-256 一致的服务器（REST 与 WebSocket 同一套，仅此模式放宽主机名校验）；https 无指纹 → 系统信任库 + 标准主机名校验；http 行为不变。永不关闭校验。
+- 连接诊断新增中文提示：指纹不匹配 / 证书不受信任 / 证书与地址不匹配 / 证书过期 / 指纹格式错误 / 握手失败。逻辑在 `api/TlsPinning.kt`，测试 `TlsPinningTest.kt`（本地 HTTPS/WSS MockWebServer 端到端）。
+- 版本 0.12（versionCode 12）。

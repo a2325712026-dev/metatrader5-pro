@@ -4,12 +4,15 @@ from PyInstaller.utils.hooks import collect_all
 
 datas = []
 binaries = []
-hiddenimports = ['numpy', 'dotenv', 'h11', 'anyio._backends._asyncio']
+hiddenimports = ['numpy', 'dotenv', 'h11', 'anyio._backends._asyncio', 'certgen']  # certgen: --make-cert（同目录模块）
 hiddenimports += collect_submodules('uvicorn')
 hiddenimports += collect_submodules('websockets')
 hiddenimports += collect_submodules('fastapi')
 hiddenimports += collect_submodules('starlette')
 tmp_ret = collect_all('MetaTrader5')
+datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
+# cryptography（--make-cert 生成自签名证书用，含 Rust 扩展）
+tmp_ret = collect_all('cryptography')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 
 

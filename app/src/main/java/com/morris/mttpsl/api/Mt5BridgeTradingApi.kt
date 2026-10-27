@@ -45,12 +45,18 @@ internal fun nextBackoff(ms: Long): Long = (ms * 2).coerceIn(1000L, 15_000L)
 internal inline fun <T> JSONArray.mapTolerant(f: (JSONObject) -> T?): List<T> =
     (0 until length()).mapNotNull { i -> try { f(getJSONObject(i)) } catch (_: Exception) { null } }
 
+/** 桥接服务用的 OkHttp 客户端（含 TLS 配置）。指纹格式错误时抛 [InvalidFingerprintException]。 */
+fun bridgeHttpClient(serverUrl: String, certFingerprint: String): OkHttpClient = OkHttpClient.Builder()
+    .connectTimeout(10, TimeUnit.SECONDS).readTimeout(20, TimeUnit.SECONDS)
+    .pingInterval(20, TimeUnit.SECONDS)
+    .applyServerTls(normalizeServerUrl(serverUrl), certFingerprint).build()
+
 class Mt5BridgeTradingApi(
     serverUrl: String,
     private val apiKey: String,
-    private val http: OkHttpClient = OkHttpClient.Builder()
-        .connectTimeout(10, TimeUnit.SECONDS).readTimeout(20, TimeUnit.SECONDS)
-        .pingInterval(20, TimeUnit.SECONDS).build(),
+    /** HTTPS 证书指纹（SHA-256）；仅当地址是 https:// 且非空时固定该证书，否则用系统信任。REST 与 WebSocket 共用同一个客户端。 */
+    certFingerprint: String = "",
+    private val http: OkHttpClient = bridgeHttpClient(serverUrl, certFingerprint),
 ) : TradingApi {
     private val base = normalizeServerUrl(serverUrl)
     private val json = "application/json".toMediaType()
@@ -101,7 +107,7 @@ class Mt5BridgeTradingApi(
 
     /** 单次 WebSocket 连接；断开 / 出错时以异常结束 */
     private fun socketQuotes(symbol: String): Flow<Quote> = callbackFlow {
-        val wsUrl = base.replaceFirst("http", "ws") + "/ws/ticks?symbol=$symbol"
+        val wsUrl = toWebSocketUrl(base) + "/ws/ticks?symbol=$symbol"
         val ws = http.newWebSocket(req("").url(wsUrl).build(), object : WebSocketListener() {
             override fun onMessage(webSocket: WebSocket, text: String) {
                 parseTick(symbol, text)?.let { trySend(it) } // 坏报文直接忽略，不终止连接

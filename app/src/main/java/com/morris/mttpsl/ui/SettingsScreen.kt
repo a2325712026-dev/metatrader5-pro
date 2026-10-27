@@ -14,6 +14,9 @@ import com.morris.mttpsl.CrashLog
 import com.morris.mttpsl.Platform
 import com.morris.mttpsl.api.ConnTestResult
 import com.morris.mttpsl.api.ConnectionTester
+import com.morris.mttpsl.api.formatFingerprint
+import com.morris.mttpsl.api.isHttpsUrl
+import com.morris.mttpsl.api.normalizeFingerprint
 import com.morris.mttpsl.api.normalizeServerUrl
 import com.morris.mttpsl.api.summary
 import androidx.compose.foundation.rememberScrollState
@@ -51,17 +54,30 @@ fun SettingsScreen(initial: AppConfig, onSave: (AppConfig) -> Unit, onBack: () -
             Switch(checked = c.confirmBatchClose, onCheckedChange = { c = c.copy(confirmBatchClose = it); onConfirmBatchCloseChange(it) })
         }
         OutlinedTextField(c.serverUrl, { c = c.copy(serverUrl = it) }, label = { Text("MT5 桥接服务地址（http://IP:8000 或 https://… 都可以）") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+        val urlNorm = normalizeServerUrl(c.serverUrl)
+        val fpBad = c.certFingerprint.isNotBlank() && normalizeFingerprint(c.certFingerprint) == null
+        OutlinedTextField(c.certFingerprint, { c = c.copy(certFingerprint = it) }, label = { Text("HTTPS 证书指纹 (SHA-256)") },
+            placeholder = { Text("AA:BB:CC:… （自签名证书才需要填）") }, isError = fpBad, singleLine = true, modifier = Modifier.fillMaxWidth(),
+            supportingText = {
+                Text(when {
+                    fpBad -> "格式不对：应为 64 位十六进制（可带冒号）"
+                    c.certFingerprint.isNotBlank() && isHttpsUrl(urlNorm) -> "已启用证书固定：只信任指纹完全一致的服务器证书"
+                    c.certFingerprint.isNotBlank() -> "当前地址是 http，指纹不会被使用"
+                    isHttpsUrl(urlNorm) -> "留空 = 使用系统信任的正规证书（如 Let's Encrypt）；自签名证书请填指纹"
+                    else -> "仅 https 地址使用；服务器运行 mt5-bridge.exe --make-cert <IP> 会打印指纹"
+                })
+            })
         OutlinedTextField(c.apiKey, { c = c.copy(apiKey = it) }, label = { Text("API Key") }, singleLine = true,
             visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth())
         OutlinedTextField(c.symbol, { c = c.copy(symbol = it) }, label = { Text("品种") }, singleLine = true, modifier = Modifier.fillMaxWidth())
         Text("注意：这里不填写 MT5 登录名/密码。MT5 账户只配置在 Windows 服务器的 .env 中。", color = Color.Gray)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(onClick = { onSave(c.copy(serverUrl = normalizeServerUrl(c.serverUrl), apiKey = c.apiKey.trim())) }) { Text("保存") }
+            Button(onClick = { onSave(c.copy(serverUrl = normalizeServerUrl(c.serverUrl), apiKey = c.apiKey.trim(), certFingerprint = formatFingerprint(c.certFingerprint))) }) { Text("保存") }
             OutlinedButton(onClick = onBack) { Text("返回") }
         }
         Button(enabled = !testing, onClick = {
             testing = true; result = null
-            scope.launch { result = ConnectionTester().test(c.serverUrl, c.apiKey); testing = false }
+            scope.launch { result = ConnectionTester().test(c.serverUrl, c.apiKey, c.certFingerprint); testing = false }
         }) { Text(if (testing) "测试中…" else "测试连接") }
         if (testing) Text("正在请求 /health 和 /account …", color = Color.Gray)
         when (val r = result) {

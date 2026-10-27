@@ -461,25 +461,58 @@ def history(days: int = 7):
     return out
 
 
+def resolve_tls():
+    """读取 SSL_CERTFILE / SSL_KEYFILE（相对路径按 .env 所在目录解析）。都没设置 → 返回 (None, None)，保持纯 http。
+    只设置了其中一个，或文件不存在 → 抛出 RuntimeError（不会悄悄退回 http）。"""
+    cert = os.environ.get("SSL_CERTFILE", "").strip()
+    key = os.environ.get("SSL_KEYFILE", "").strip()
+    if not cert and not key:
+        return None, None
+    if not cert or not key:
+        raise RuntimeError("SSL_CERTFILE 和 SSL_KEYFILE 必须同时设置（只设置了其中一个）")
+    cert, key = (p if os.path.isabs(p) else os.path.join(BASE_DIR, p) for p in (cert, key))
+    for label, p in (("SSL_CERTFILE", cert), ("SSL_KEYFILE", key)):
+        if not os.path.isfile(p):
+            raise RuntimeError(f"{label} 指向的文件不存在: {p}（先运行 mt5-bridge.exe --make-cert <服务器IP> 生成）")
+    return cert, key
+
+
 def cli():
     import argparse
     import uvicorn
     p = argparse.ArgumentParser(description="MT5 Bridge（FastAPI + MetaTrader5）")
     p.add_argument("--host", default=os.environ.get("HOST", "127.0.0.1"))
     p.add_argument("--port", type=int, default=int(os.environ.get("PORT", "8000")))
+    p.add_argument("--make-cert", metavar="IP", help="生成自签名 HTTPS 证书（cert.pem / key.pem，写到 .env 旁边）并打印 SHA-256 指纹，然后退出")
+    p.add_argument("--force", action="store_true", help="与 --make-cert 合用：覆盖已有的 cert.pem / key.pem")
     args = p.parse_args()
+    if args.make_cert:
+        from certgen import run_make_cert  # 延迟导入：只有用到时才需要 cryptography
+        return run_make_cert(args.make_cert, BASE_DIR, args.force)
+    ssl_cert, ssl_key = resolve_tls()
+    scheme = "https" if ssl_cert else "http"
     print("=" * 56, flush=True)
     print(" MT5 Bridge 服务", flush=True)
     print(f" 配置文件: {ENV_PATH} {'(已找到)' if os.path.exists(ENV_PATH) else '(未找到！请把 .env.example 复制为 .env 并填写)'}", flush=True)
-    print(f" 监听地址: http://{args.host}:{args.port}   (健康检查 /health)", flush=True)
+    print(f" 监听地址: {scheme}://{args.host}:{args.port}   (健康检查 /health)", flush=True)
+    if ssl_cert:
+        print(f" HTTPS: 已启用（证书 {ssl_cert}）", flush=True)
+        try:
+            from certgen import cert_fingerprint
+            print(f" 证书 SHA-256 指纹: {cert_fingerprint(ssl_cert)}", flush=True)
+        except Exception:
+            pass  # 没有 cryptography / 证书不是 PEM 单证书：只是不显示指纹，不影响启动
+    elif args.host not in ("127.0.0.1", "localhost"):
+        print(" 注意：已对外监听但未启用 HTTPS（API Key 明文传输）。建议：mt5-bridge.exe --make-cert <服务器IP>，再在 .env 设置 SSL_CERTFILE / SSL_KEYFILE", flush=True)
     if args.host not in ("127.0.0.1", "localhost"):
-        print(" 注意：已对外监听，请务必设置强 API Key，并建议用 HTTPS 反向代理", flush=True)
+        print(" 注意：已对外监听，请务必设置强 API Key", flush=True)
     print(" 按 Ctrl+C 停止", flush=True)
     print("=" * 56, flush=True)
     if not API_KEY:
         print("[错误] 未设置 BRIDGE_API_KEY（在 .env 中填写）", flush=True)
         return 2
-    uvicorn.run(app, host=args.host, port=args.port, log_level="info")
+    kw = {"ssl_certfile": ssl_cert, "ssl_keyfile": ssl_key} if ssl_cert else {}
+    uvicorn.run(app, host=args.host, port=args.port, log_level="info", **kw)
     return 0
 
 

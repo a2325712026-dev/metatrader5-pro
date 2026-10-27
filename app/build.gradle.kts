@@ -8,7 +8,7 @@ android {
     compileSdk = 34
     defaultConfig {
         applicationId = "com.morris.mttpsl"
-        minSdk = 26; targetSdk = 34; versionCode = 11; versionName = "0.11"
+        minSdk = 26; targetSdk = 34; versionCode = 12; versionName = "0.12"
     }
     buildTypes {
         // 与 v6 相同：release 用 debug 证书签名，才能直接覆盖安装
@@ -31,6 +31,7 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     testImplementation("junit:junit:4.13.2")
     testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
+    testImplementation("com.squareup.okhttp3:okhttp-tls:4.12.0") // 测试用：生成自签名证书 / HTTPS MockWebServer
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.8.1")
     testImplementation("org.json:json:20240303")
 }

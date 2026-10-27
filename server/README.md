@@ -31,10 +31,43 @@ nssm start MT5Bridge
 **方式 B：任务计划程序（推荐）**：创建任务 → 触发器“用户登录时” → 操作：启动 `run.bat` → 勾选“只在用户登录时运行”。配合 Windows 自动登录，MT5 终端也加入启动项。
 
 ## 4. 网络与安全
-- 服务默认只监听 127.0.0.1。推荐用反向代理提供 HTTPS（Caddy 最简单：`caddy reverse-proxy --from your.domain.com --to 127.0.0.1:8000`，自动证书）。
-- Windows 防火墙仅开放 443（`New-NetFirewallRule -DisplayName "HTTPS" -Direction Inbound -LocalPort 443 -Protocol TCP -Action Allow`），并在云厂商安全组中限制来源 IP（如可能）。
-- 不要直接把 8000 端口以 HTTP 暴露到公网（API Key 会明文传输）。
-- 所有请求需带 `X-API-Key` 头。
+- 服务默认只监听 127.0.0.1（`.env` 的 `HOST`，或命令行 `--host`）；让手机访问需要 `HOST=0.0.0.0`，**同时务必启用 HTTPS（见第 4.1 节）**，否则 API Key 与全部交易数据都是明文。
+- 也可以用反向代理提供 HTTPS（有域名时 Caddy 最简单：`caddy reverse-proxy --from your.domain.com --to 127.0.0.1:8000`，自动证书），此时桥接服务保持 127.0.0.1、不设 SSL_*。
+- Windows 防火墙只开放你实际使用的那一个端口，并在云厂商安全组里把来源限制为你自己的 IP（如可能）。
+- 所有请求需带 `X-API-Key` 头；API Key 要足够长且随机。
+
+### 4.1 启用 HTTPS（自签名证书 + 裸 IP，无需域名）/ Enable HTTPS (self-signed, bare IP)
+桥接服务自带 TLS：`.env` 里设置 `SSL_CERTFILE` 和 `SSL_KEYFILE`（两项必须同时设置；都留空 = 仍是纯 http，行为不变；相对路径按 `.env` 所在目录解析）。App v0.12+ 支持 https，并可用“HTTPS 证书指纹 (SHA-256)”只信任这一张自签名证书（证书固定）。
+
+**打包版 exe（无需安装 Python）— 在 Windows 服务器上：**
+1. 先退出正在运行的 mt5-bridge。在 `mt5-bridge.exe` 所在文件夹（也就是 `.env` 所在文件夹）打开命令提示符 / PowerShell，运行（把 IP 换成服务器公网 IP，填你自己的，不要写进任何文档/代码）：
+   ```
+   .\mt5-bridge.exe --make-cert 203.0.113.10
+   ```
+   会在同目录生成 `cert.pem`（证书，有效期约 10 年，subjectAltName 含该 IP）和 `key.pem`（**私钥，不要外传**），并打印 **SHA-256 指纹**（形如 `AA:BB:…`，共 32 组）。把这一行复制保存好。已有证书时不会覆盖；确需重新生成请加 `--force`（之后 App 里的指纹必须同步更新）。
+2. 编辑 `.env`，加入（或把已有的空项填上）：
+   ```
+   HOST=0.0.0.0
+   PORT=8000
+   SSL_CERTFILE=cert.pem
+   SSL_KEYFILE=key.pem
+   ```
+3. 放行端口（管理员 PowerShell，端口与 `PORT` 一致）：
+   ```
+   New-NetFirewallRule -DisplayName "MT5 Bridge HTTPS" -Direction Inbound -LocalPort 8000 -Protocol TCP -Action Allow
+   ```
+   并在 **腾讯云控制台 → 云服务器 → 安全组 → 入站规则** 添加：协议 TCP、端口 8000（与 `PORT` 一致）、来源建议限制为你自己的公网 IP（不确定就先 0.0.0.0/0，之后再收紧）。Windows 防火墙和云安全组两处都要放行。
+4. 重新启动 `mt5-bridge.exe`。窗口里应显示 `监听地址: https://0.0.0.0:8000`、`HTTPS: 已启用` 和 `证书 SHA-256 指纹: …`（与第 1 步打印的一致）。在服务器上自测：`curl.exe -k https://127.0.0.1:8000/health` 应返回 `{"ok":true}`。
+5. 手机 App（v0.12+）→ 设置：服务器地址填 `https://服务器公网IP:8000`；**HTTPS 证书指纹 (SHA-256)** 粘贴第 1 步的指纹；API Key 不变；点“测试连接”。
+
+**用 Python 运行（`run.bat` / NSSM）：** `.venv\Scripts\pip install -r requirements.txt`（含 `cryptography`），然后 `make-cert.bat 服务器公网IP`（或 `python make-cert.py 服务器公网IP [--out 目录] [--force]`），其余步骤相同。
+
+**注意：**
+- 启用 TLS 后这个端口只接受 https；旧版 App（v0.11 及以前）和 `http://` 地址将无法连接——请同时升级 App。
+- 指纹只对 https 地址生效；留空 = 使用系统信任的证书。若你有域名和正规证书（如 Let’s Encrypt），把 `SSL_CERTFILE` / `SSL_KEYFILE` 指向 fullchain / privkey，App 里指纹留空即可。
+- 如果 App 提示“HTTPS 证书指纹不匹配”，说明服务器出示的证书与设置里的不一致：确认是不是重新生成过证书；没改过却不匹配时不要继续使用（可能被中途拦截）。
+
+**English summary:** run `mt5-bridge.exe --make-cert <server-ip>` (or `python make-cert.py <server-ip>`) next to `.env` → it writes `cert.pem` / `key.pem` (10-year self-signed cert with the IP as subjectAltName) and prints the SHA-256 fingerprint. Add `SSL_CERTFILE=cert.pem`, `SSL_KEYFILE=key.pem` (and `HOST=0.0.0.0`) to `.env`, open the port in Windows Firewall **and** the Tencent Cloud security group, restart, then in the app use `https://<ip>:<port>` and paste the fingerprint into “HTTPS 证书指纹 (SHA-256)”. With both variables unset the bridge stays plain http.
 
 ## 5. 接口
 | 方法 | 路径 | 说明 |
@@ -57,7 +90,7 @@ nssm start MT5Bridge
 | WS | /ws/ticks?symbol=EURUSD | 实时报价（symbol_info_tick 轮询 200ms） |
 
 ## 6. App 设置
-App 右上角“设置”→ 关闭演示模式 → 填写服务地址（如 https://your.domain.com）和 API Key → 保存。
+App 右上角“设置”→ 关闭演示模式 → 填写服务地址（如 https://服务器IP:8000 或 https://your.domain.com）和 API Key；自签名证书还要填“HTTPS 证书指纹 (SHA-256)” → 保存 → 测试连接。
 
 ## 7. 已验证（2026-10-19，Linux + WineHQ 11 + MT5 + Windows Python 3.11，MetaQuotes-Demo 模拟账户）
 /health、/account、/symbol、/candles、/positions、WS 报价、市价买入 0.01 → 修改 TP/SL → 平仓，全部 retcode 10009 成功。

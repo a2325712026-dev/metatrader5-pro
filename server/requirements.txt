@@ -2,5 +2,6 @@ MetaTrader5>=5.0.45
 fastapi>=0.110
 uvicorn[standard]>=0.29
 python-dotenv>=1.0
+cryptography>=42  # 仅 make-cert.py / --make-cert 生成自签名 HTTPS 证书时需要
 # 仅在 Linux + Wine 下运行时需要（Wine 的 ucrtbase 缺少 crealf，numpy 2.x 会崩溃）：
 # numpy<2

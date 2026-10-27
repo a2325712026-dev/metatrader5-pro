@@ -32,8 +32,8 @@ class MainActivity : ComponentActivity() {
                 Box(Modifier.fillMaxSize().background(Color.Black))
                 return@setContent
             }
-            LaunchedEffect(c.canUseLive, c.serverUrl, c.apiKey) {
-                vm.configure(c.canUseLive, com.morris.mttpsl.api.normalizeServerUrl(c.serverUrl), c.apiKey, c.symbol)
+            LaunchedEffect(c.canUseLive, c.serverUrl, c.apiKey, c.certFingerprint) {
+                vm.configure(c.canUseLive, com.morris.mttpsl.api.normalizeServerUrl(c.serverUrl), c.apiKey, c.symbol, certFingerprint = c.certFingerprint)
             }
             LaunchedEffect(c.confirmBatchClose) { vm.setConfirmBatchClose(c.confirmBatchClose) }
             val status = "${c.platform} · ${if (c.canUseLive) "已连接 MT5 桥接服务" else "演示模式"}"

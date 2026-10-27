@@ -13,7 +13,8 @@ import java.util.concurrent.TimeUnit
 class HttpStatusException(val code: Int, val body: String) : RuntimeException("HTTP $code: $body")
 
 enum class ConnKind {
-    CLEARTEXT_BLOCKED, TIMEOUT, REFUSED, UNREACHABLE, DNS, URL_FORMAT, TLS, AUTH, NOT_FOUND, SERVER_ERROR, HTTP_OTHER, UNKNOWN
+    CLEARTEXT_BLOCKED, TIMEOUT, REFUSED, UNREACHABLE, DNS, URL_FORMAT,
+    TLS, TLS_PIN_MISMATCH, TLS_UNTRUSTED, TLS_HOSTNAME, TLS_EXPIRED, TLS_BAD_FINGERPRINT, AUTH, NOT_FOUND, SERVER_ERROR, HTTP_OTHER, UNKNOWN
 }
 
 /**
@@ -22,7 +23,7 @@ enum class ConnKind {
  */
 data class ConnIssue(val kind: ConnKind, val title: String, val hint: String, val raw: String)
 
-/** 规范化用户输入的服务器地址：去空格/全角冒号/末尾斜杠；没写协议则默认 http:// */
+/** 规范化用户输入的服务器地址：去空格/全角冒号/末尾斜杠；没写协议则默认 http://；ws:// → http://，wss:// → https:// */
 fun normalizeServerUrl(raw: String): String {
     val t = raw.filter { !it.isWhitespace() }.replace('：', ':').replace('／', '/')
     if (t.isEmpty()) return ""
@@ -30,7 +31,8 @@ fun normalizeServerUrl(raw: String): String {
     val i = withScheme.indexOf("://")
     val rest = withScheme.substring(i + 3).trimEnd('/')
     if (rest.isEmpty()) return ""
-    return withScheme.substring(0, i).lowercase() + "://" + rest
+    val scheme = when (val sc = withScheme.substring(0, i).lowercase()) { "ws" -> "http"; "wss" -> "https"; else -> sc }
+    return "$scheme://$rest"
 }
 
 /** 地址是否可被 OkHttp 解析（仅 http/https） */
@@ -68,7 +70,29 @@ fun classifyError(e: Throwable, apiKey: String? = null): ConnIssue {
     val text = chain.joinToString(" | ") { "${it.javaClass.name} ${it.message ?: ""}" }.lowercase()
     val raw = describeException(e, apiKey)
     fun has(vararg k: String) = k.any { text.contains(it.lowercase()) }
+    val rawText = chain.joinToString(" | ") { it.message ?: "" }
     return when {
+        chain.any { it is InvalidFingerprintException } ->
+            ConnIssue(ConnKind.TLS_BAD_FINGERPRINT, "HTTPS 证书指纹格式不对",
+                "“HTTPS 证书指纹 (SHA-256)”应是 64 位十六进制（可带冒号，如 AA:BB:CC:…，共 32 组）。请直接复制服务器上 mt5-bridge.exe --make-cert 打印的那一行；不用指纹就把这一栏清空。", raw)
+        chain.any { it is FingerprintMismatchException } || has("fingerprint mismatch") -> {
+            val actual = chain.firstNotNullOfOrNull { (it as? FingerprintMismatchException)?.actual }
+                ?: Regex("presented ([0-9A-Fa-f]{2}(?::[0-9A-Fa-f]{2}){31})").find(rawText)?.groupValues?.get(1)
+            ConnIssue(ConnKind.TLS_PIN_MISMATCH, "HTTPS 证书指纹不匹配",
+                "服务器出示的证书与设置里的“HTTPS 证书指纹”不一致" + (actual?.let { "（服务器实际指纹：$it）" } ?: "") +
+                    "。如果你刚在服务器上重新生成过证书，请把新指纹填进设置；如果没有改过证书，请不要继续使用这个连接——可能有人在中途拦截。已拒绝连接，没有发送 API Key。", raw)
+        }
+        chain.any { it is java.security.cert.CertificateExpiredException || it is java.security.cert.CertificateNotYetValidException } ||
+            has("certificateexpired", "certificate expired", "not yet valid", "notafter", "notbefore") ->
+            ConnIssue(ConnKind.TLS_EXPIRED, "HTTPS 证书已过期或尚未生效",
+                "证书的有效期不包含当前时间。请先检查手机的日期和时间是否正确（开启自动时间）；若确实过期，请在服务器上用 --make-cert --force 重新生成证书，并更新设置里的指纹。", raw)
+        chain.any { it is javax.net.ssl.SSLPeerUnverifiedException } || has("not verified", "no subject alternative") ->
+            ConnIssue(ConnKind.TLS_HOSTNAME, "证书与服务器地址不匹配",
+                "证书里没有包含你填写的地址（用 IP 访问时，证书必须把这个 IP 写进 subjectAltName）。请用 --make-cert <服务器IP> 重新生成；或在设置里填写“HTTPS 证书指纹”（固定指纹模式不比对主机名）。", raw)
+        chain.any { it is java.security.cert.CertPathValidatorException || it is java.security.cert.CertificateException } ||
+            has("trust anchor", "unable to find valid certification path", "certpathvalidator", "self signed", "self-signed", "chain validation failed") ->
+            ConnIssue(ConnKind.TLS_UNTRUSTED, "服务器证书不受信任",
+                "手机不信任这个 https 证书（自签名证书都会这样）。请在设置里填写“HTTPS 证书指纹 (SHA-256)”——服务器运行 mt5-bridge.exe --make-cert 时会打印；如果用的是正规证书（如 Let's Encrypt），请检查证书是否过期或证书链是否完整。", raw)
         chain.any { it is UnknownServiceException } && has("cleartext") || has("cleartext communication") ->
             ConnIssue(ConnKind.CLEARTEXT_BLOCKED, "系统禁止了 http 明文连接",
                 "手机系统拦截了 http:// 地址。请安装最新版 App（已放开 http），或让服务器改用 https。", raw)
@@ -88,8 +112,8 @@ fun classifyError(e: Throwable, apiKey: String? = null): ConnIssue {
             ConnIssue(ConnKind.UNREACHABLE, "网络不可达",
                 "手机当前无法到达这个地址。请检查手机是否联网（WiFi/流量）、是否开了会拦截的代理/VPN，以及服务器 IP 是否正确。", raw)
         chain.any { it is javax.net.ssl.SSLException } || has("ssl", "tls", "handshake", "certificate", "trust anchor") ->
-            ConnIssue(ConnKind.TLS, "https 安全连接失败",
-                "如果你的服务器只支持 http，请把地址改成 http://IP:8000；如果是 https，请检查证书是否有效。", raw)
+            ConnIssue(ConnKind.TLS, "https 握手失败",
+                "安全连接没能建立。最常见原因：服务器其实没有启用 https（请把地址改成 http://IP:端口，或在服务器 .env 里设置 SSL_CERTFILE / SSL_KEYFILE 后重启服务）；其次是端口填错、证书/私钥不匹配，或中间有设备拦截了 TLS。", raw)
         chain.any { it is java.net.ConnectException } ->
             ConnIssue(ConnKind.UNREACHABLE, "无法连接到服务器",
                 "手机连不上这个地址。请检查网络、服务器 IP 和端口，以及云服务器防火墙。", raw)
@@ -105,10 +129,10 @@ sealed class ConnTestResult {
 
 /** 设置页“测试连接”：先 GET /health（不带 Key），再 GET /account（带 Key） */
 class ConnectionTester(
-    private val http: OkHttpClient = OkHttpClient.Builder()
-        .connectTimeout(8, TimeUnit.SECONDS).readTimeout(10, TimeUnit.SECONDS).callTimeout(15, TimeUnit.SECONDS).build(),
+    /** 测试用注入的客户端；为空时每次测试按“地址 + 证书指纹”新建（https 且有指纹 → 固定指纹）。 */
+    private val http: OkHttpClient? = null,
 ) {
-    suspend fun test(rawUrl: String, apiKey: String): ConnTestResult = withContext(Dispatchers.IO) {
+    suspend fun test(rawUrl: String, apiKey: String, certFingerprint: String = ""): ConnTestResult = withContext(Dispatchers.IO) {
         val base = normalizeServerUrl(rawUrl)
         val key = apiKey.trim()
         if (base.isEmpty() || !isValidServerUrl(base)) {
@@ -117,10 +141,16 @@ class ConnectionTester(
         }
         if (key.isEmpty()) return@withContext ConnTestResult.Failure("检查 API Key",
             ConnIssue(ConnKind.AUTH, "还没有填写 API Key", "请先在下面填写 API Key 再测试。", "API Key is empty"))
-        val health = try { get("$base/health", null) } catch (e: Exception) {
+        val client = http ?: try {
+            OkHttpClient.Builder().connectTimeout(8, TimeUnit.SECONDS).readTimeout(10, TimeUnit.SECONDS).callTimeout(15, TimeUnit.SECONDS)
+                .applyServerTls(base, certFingerprint).build()
+        } catch (e: InvalidFingerprintException) {
+            return@withContext ConnTestResult.Failure("检查证书指纹", classifyError(e, key))
+        }
+        val health = try { get(client, "$base/health", null) } catch (e: Exception) {
             return@withContext ConnTestResult.Failure("第 1 步 /health", classifyError(e, key))
         }
-        val acc = try { JSONObject(get("$base/account", key)) } catch (e: Exception) {
+        val acc = try { JSONObject(get(client, "$base/account", key)) } catch (e: Exception) {
             return@withContext ConnTestResult.Failure("第 2 步 /account", classifyError(e, key))
         }
         try {
@@ -129,7 +159,7 @@ class ConnectionTester(
         } catch (e: Exception) { ConnTestResult.Failure("解析 /account", classifyError(e, key)) }
     }
 
-    private fun get(url: String, apiKey: String?): String {
+    private fun get(http: OkHttpClient, url: String, apiKey: String?): String {
         val b = Request.Builder().url(url)
         if (apiKey != null) b.header("X-API-Key", apiKey)
         http.newCall(b.get().build()).execute().use { r ->

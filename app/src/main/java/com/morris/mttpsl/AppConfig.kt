@@ -22,6 +22,8 @@ data class AppConfig(
     val symbol: String = "EURUSD",
     /** 图表右上角“一键平仓”是否弹出确认对话框（默认开启） */
     val confirmBatchClose: Boolean = true,
+    /** HTTPS 证书指纹（SHA-256，冒号分隔）；仅 https 地址使用，空 = 使用系统信任的证书 */
+    val certFingerprint: String = "",
 ) {
     val canUseLive get() = !demoMode && serverUrl.isNotBlank() && apiKey.isNotBlank()
 }
@@ -36,6 +38,7 @@ class ConfigRepository(private val ds: DataStore<Preferences>) {
         val url = stringPreferencesKey("url");
         val token = stringPreferencesKey("token"); val sym = stringPreferencesKey("sym")
         val confirmBatch = booleanPreferencesKey("confirm_batch_close")
+        val certFp = stringPreferencesKey("cert_fp")
     }
     // 存储损坏 / 读取失败 / 未知枚举值都回退到默认配置，而不是让收集 Flow 的界面崩溃
     val config: Flow<AppConfig> = ds.data.catch { emit(androidx.datastore.preferences.core.emptyPreferences()) }.map { p ->
@@ -44,12 +47,14 @@ class ConfigRepository(private val ds: DataStore<Preferences>) {
             demoMode = p[K.demo]?.toBoolean() ?: true,
             serverUrl = p[K.url] ?: "", apiKey = p[K.token] ?: "", symbol = p[K.sym] ?: "EURUSD",
             confirmBatchClose = p[K.confirmBatch] ?: true,
+            certFingerprint = p[K.certFp] ?: "",
         )
     }
     suspend fun save(c: AppConfig) = ds.edit { p ->
         p[K.platform] = c.platform.name; p[K.demo] = c.demoMode.toString()
         p[K.url] = com.morris.mttpsl.api.normalizeServerUrl(c.serverUrl); p[K.token] = c.apiKey.trim(); p[K.sym] = c.symbol.trim().ifEmpty { "EURUSD" }
         p[K.confirmBatch] = c.confirmBatchClose
+        p[K.certFp] = com.morris.mttpsl.api.formatFingerprint(c.certFingerprint)
     }
 
     /** 设置页开关：立即持久化，不必等到点“保存” */

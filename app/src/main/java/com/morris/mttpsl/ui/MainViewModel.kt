@@ -182,7 +182,7 @@ class MainViewModel : ViewModel() {
     private val _connIssue = MutableStateFlow<ConnIssue?>(null); val connIssue: StateFlow<ConnIssue?> = _connIssue
     private val issues = LinkedHashMap<String, ConnIssue>()
     private var liveArgs: LiveArgs? = null
-    private data class LiveArgs(val url: String, val key: String, val symbol: String)
+    private data class LiveArgs(val url: String, val key: String, val symbol: String, val certFingerprint: String = "")
     private fun setIssue(src: String, issue: ConnIssue?) {
         if (issue == null) issues.remove(src) else issues[src] = issue
         val first = issues.values.firstOrNull()
@@ -193,14 +193,14 @@ class MainViewModel : ViewModel() {
      * 根据设置切换数据源。只有数据源真正变化时才重建（演示模式始终使用进程内共享的 DemoTradingApi，
      * 修改设置不会清空演示账户）。
      */
-    fun configure(live: Boolean, serverUrlRaw: String, apiKeyValue: String, symbol: String, apiOverride: TradingApi? = null) {
+    fun configure(live: Boolean, serverUrlRaw: String, apiKeyValue: String, symbol: String, apiOverride: TradingApi? = null, certFingerprint: String = "") {
         val serverUrl = if (live) normalizeServerUrl(serverUrlRaw) else serverUrlRaw
-        liveArgs = if (live && apiOverride == null) LiveArgs(serverUrl, apiKeyValue, symbol) else null
-        val key = if (apiOverride != null) "override" else if (live) "live|$serverUrl|$apiKeyValue" else "demo"
+        liveArgs = if (live && apiOverride == null) LiveArgs(serverUrl, apiKeyValue, symbol, certFingerprint) else null
+        val key = if (apiOverride != null) "override" else if (live) "live|$serverUrl|$apiKeyValue|${normalizeFingerprint(certFingerprint) ?: certFingerprint.trim()}" else "demo"
         if (key == apiKey) return
         apiKey = key
-        api = apiOverride ?: if (live) try { Mt5BridgeTradingApi(serverUrl, apiKeyValue) } catch (e: Exception) {
-            com.morris.mttpsl.CrashLog.record(e); toast("❌ 服务器地址无效，已回到演示模式：${e.message?.take(80)}"); DemoTradingApi.shared
+        api = apiOverride ?: if (live) try { Mt5BridgeTradingApi(serverUrl, apiKeyValue, certFingerprint) } catch (e: Exception) {
+            com.morris.mttpsl.CrashLog.record(e); toast(if (e is InvalidFingerprintException) "❌ HTTPS 证书指纹格式不对，已回到演示模式（请在设置里检查指纹）" else "❌ 服务器地址无效，已回到演示模式：${e.message?.take(80)}"); DemoTradingApi.shared
         } else DemoTradingApi.shared
         jobs.forEach { it.cancel() }; jobs.clear()
         _trade.value = TradeState(); _quotes.value = emptyList(); lastError = null; _closeId.value = null; _closeBusy.value = false
