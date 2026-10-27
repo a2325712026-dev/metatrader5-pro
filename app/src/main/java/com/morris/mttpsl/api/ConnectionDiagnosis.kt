@@ -1,0 +1,145 @@
+package com.morris.mttpsl.api
+
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import org.json.JSONObject
+import java.net.UnknownServiceException
+import java.util.concurrent.TimeUnit
+
+/** 服务端返回非 2xx 时抛出（消息格式与旧版一致："HTTP 401: body"） */
+class HttpStatusException(val code: Int, val body: String) : RuntimeException("HTTP $code: $body")
+
+enum class ConnKind {
+    CLEARTEXT_BLOCKED, TIMEOUT, REFUSED, UNREACHABLE, DNS, URL_FORMAT, TLS, AUTH, NOT_FOUND, SERVER_ERROR, HTTP_OTHER, UNKNOWN
+}
+
+/**
+ * 一次连接失败的“人话”说明。
+ * [raw] 是原始异常类名 + 消息（已去掉 API Key），用于小字显示 / 截图。
+ */
+data class ConnIssue(val kind: ConnKind, val title: String, val hint: String, val raw: String)
+
+/** 规范化用户输入的服务器地址：去空格/全角冒号/末尾斜杠；没写协议则默认 http:// */
+fun normalizeServerUrl(raw: String): String {
+    val t = raw.filter { !it.isWhitespace() }.replace('：', ':').replace('／', '/')
+    if (t.isEmpty()) return ""
+    val withScheme = if (t.contains("://")) t else "http://$t"
+    val i = withScheme.indexOf("://")
+    val rest = withScheme.substring(i + 3).trimEnd('/')
+    if (rest.isEmpty()) return ""
+    return withScheme.substring(0, i).lowercase() + "://" + rest
+}
+
+/** 地址是否可被 OkHttp 解析（仅 http/https） */
+fun isValidServerUrl(url: String): Boolean = url.toHttpUrlOrNull() != null
+
+private fun redact(s: String, apiKey: String?): String {
+    val k = apiKey?.trim().orEmpty()
+    return if (k.length >= 4) s.replace(k, "***") else s
+}
+
+/** 异常 + 原因链的完整描述（类名: 消息），去掉 API Key，限长 */
+fun describeException(e: Throwable, apiKey: String? = null): String {
+    val parts = generateSequence(e) { it.cause?.takeIf { c -> c !== it } }.take(4)
+        .map { t -> if (t.message.isNullOrEmpty()) t.javaClass.name else "${t.javaClass.name}: ${t.message}" }
+    return redact(parts.joinToString("\n  ← "), apiKey).take(600)
+}
+
+fun classifyHttp(code: Int, body: String, apiKey: String? = null): ConnIssue {
+    val raw = redact("HTTP $code: ${body.take(200)}", apiKey)
+    return when {
+        code == 401 || code == 403 -> ConnIssue(ConnKind.AUTH, "API Key 不对（HTTP $code）",
+            "服务器收到了请求但拒绝了密钥。请到设置里重新粘贴服务器 .env 中的 API Key（注意不要多复制空格）。", raw)
+        code == 404 -> ConnIssue(ConnKind.NOT_FOUND, "服务器地址不对（HTTP 404）",
+            "连上了某个服务，但没有这个接口。请确认端口是 8000，且地址不要带多余的路径。", raw)
+        code in 500..599 -> ConnIssue(ConnKind.SERVER_ERROR, "服务器内部错误（HTTP $code）",
+            "网络是通的，但服务器处理出错（常见原因：服务器上的 MT5 终端没有登录或没打开）。请检查 Windows 服务器。", raw)
+        else -> ConnIssue(ConnKind.HTTP_OTHER, "服务器返回异常（HTTP $code）", "网络是通的，但服务器返回了意外的状态码。", raw)
+    }
+}
+
+/** 把任意异常翻译成中文原因 */
+fun classifyError(e: Throwable, apiKey: String? = null): ConnIssue {
+    if (e is HttpStatusException) return classifyHttp(e.code, e.body, apiKey)
+    val chain = generateSequence(e) { it.cause?.takeIf { c -> c !== it } }.take(6).toList()
+    val text = chain.joinToString(" | ") { "${it.javaClass.name} ${it.message ?: ""}" }.lowercase()
+    val raw = describeException(e, apiKey)
+    fun has(vararg k: String) = k.any { text.contains(it.lowercase()) }
+    return when {
+        chain.any { it is UnknownServiceException } && has("cleartext") || has("cleartext communication") ->
+            ConnIssue(ConnKind.CLEARTEXT_BLOCKED, "系统禁止了 http 明文连接",
+                "手机系统拦截了 http:// 地址。请安装最新版 App（已放开 http），或让服务器改用 https。", raw)
+        chain.any { it is IllegalArgumentException } && has("expected url scheme", "unexpected url", "invalid url", "unexpected port", "host", "url") ->
+            ConnIssue(ConnKind.URL_FORMAT, "服务器地址格式不对",
+                "请填写形如 http://203.0.113.10:8000 的地址（IP 或域名 + 端口，不要有中文或空格）。", raw)
+        chain.any { it is java.net.UnknownHostException } || has("unable to resolve host", "no address associated") ->
+            ConnIssue(ConnKind.DNS, "域名解析失败（DNS）",
+                "手机找不到这个域名。请检查地址有没有写错，或手机是否已联网；直接用 IP 地址可以避开 DNS。", raw)
+        chain.any { it is java.net.SocketTimeoutException } || has("timeout", "timed out") ->
+            ConnIssue(ConnKind.TIMEOUT, "连接超时",
+                "手机发出了请求但服务器没有回应。常见原因：云服务器防火墙/安全组没有放行 8000 端口、服务器没开机、服务没启动。", raw)
+        has("econnrefused", "connection refused") ->
+            ConnIssue(ConnKind.REFUSED, "连接被拒绝",
+                "服务器主机能访问，但 8000 端口没有程序在监听。请确认桥接服务已启动，且端口号正确。", raw)
+        chain.any { it is java.net.NoRouteToHostException } || has("enetunreach", "network is unreachable", "no route to host", "ehostunreach") ->
+            ConnIssue(ConnKind.UNREACHABLE, "网络不可达",
+                "手机当前无法到达这个地址。请检查手机是否联网（WiFi/流量）、是否开了会拦截的代理/VPN，以及服务器 IP 是否正确。", raw)
+        chain.any { it is javax.net.ssl.SSLException } || has("ssl", "tls", "handshake", "certificate", "trust anchor") ->
+            ConnIssue(ConnKind.TLS, "https 安全连接失败",
+                "如果你的服务器只支持 http，请把地址改成 http://IP:8000；如果是 https，请检查证书是否有效。", raw)
+        chain.any { it is java.net.ConnectException } ->
+            ConnIssue(ConnKind.UNREACHABLE, "无法连接到服务器",
+                "手机连不上这个地址。请检查网络、服务器 IP 和端口，以及云服务器防火墙。", raw)
+        else -> ConnIssue(ConnKind.UNKNOWN, "连接失败（未知原因）", "请把下面的小字截图发给开发者。", raw)
+    }
+}
+
+/** “测试连接”结果 */
+sealed class ConnTestResult {
+    data class Success(val health: String, val account: AccountInfo) : ConnTestResult()
+    data class Failure(val step: String, val issue: ConnIssue) : ConnTestResult()
+}
+
+/** 设置页“测试连接”：先 GET /health（不带 Key），再 GET /account（带 Key） */
+class ConnectionTester(
+    private val http: OkHttpClient = OkHttpClient.Builder()
+        .connectTimeout(8, TimeUnit.SECONDS).readTimeout(10, TimeUnit.SECONDS).callTimeout(15, TimeUnit.SECONDS).build(),
+) {
+    suspend fun test(rawUrl: String, apiKey: String): ConnTestResult = withContext(Dispatchers.IO) {
+        val base = normalizeServerUrl(rawUrl)
+        val key = apiKey.trim()
+        if (base.isEmpty() || !isValidServerUrl(base)) {
+            return@withContext ConnTestResult.Failure("检查地址",
+                classifyError(IllegalArgumentException("Invalid URL: ${base.ifEmpty { "(empty)" }}"), key))
+        }
+        if (key.isEmpty()) return@withContext ConnTestResult.Failure("检查 API Key",
+            ConnIssue(ConnKind.AUTH, "还没有填写 API Key", "请先在下面填写 API Key 再测试。", "API Key is empty"))
+        val health = try { get("$base/health", null) } catch (e: Exception) {
+            return@withContext ConnTestResult.Failure("第 1 步 /health", classifyError(e, key))
+        }
+        val acc = try { JSONObject(get("$base/account", key)) } catch (e: Exception) {
+            return@withContext ConnTestResult.Failure("第 2 步 /account", classifyError(e, key))
+        }
+        try {
+            ConnTestResult.Success(health.take(120), AccountInfo(acc.optString("login"), acc.optString("server"), acc.optString("currency"),
+                acc.optDouble("balance"), acc.optDouble("equity"), acc.optDouble("margin"), acc.optDouble("margin_free"), acc.optInt("leverage")))
+        } catch (e: Exception) { ConnTestResult.Failure("解析 /account", classifyError(e, key)) }
+    }
+
+    private fun get(url: String, apiKey: String?): String {
+        val b = Request.Builder().url(url)
+        if (apiKey != null) b.header("X-API-Key", apiKey)
+        http.newCall(b.get().build()).execute().use { r ->
+            val body = r.body?.string() ?: ""
+            if (!r.isSuccessful) throw HttpStatusException(r.code, body.take(300))
+            return body
+        }
+    }
+}
+
+/** 测试成功时显示的中文文字 */
+fun ConnTestResult.Success.summary(): String =
+    "✅ 连接成功\n账户 ${account.login} · ${account.server}\n余额 %.2f %s · 净值 %.2f".format(account.balance, account.currency, account.equity)

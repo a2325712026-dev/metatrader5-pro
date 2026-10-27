@@ -1,0 +1,226 @@
+<!doctype html><html lang="zh"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>MT5 风格 TP/SL 演示 v11</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#111;color:#eee;font:14px system-ui,sans-serif;display:flex;justify-content:center}
+#app{width:412px;height:880px;display:flex;flex-direction:column;background:#000;position:relative;overflow:hidden}
+.top{display:flex;align-items:center;padding:6px 12px}.top .t{flex:1}.sym{color:#4c8df6;font-weight:bold}.tfb{color:#fff;font-weight:bold;margin-right:14px;cursor:pointer}
+.oval{width:52px;height:30px;border-radius:15px;overflow:hidden;display:flex;cursor:pointer;position:relative}.oval i{flex:1;display:flex;align-items:center;justify-content:center;color:#fff;font-style:normal;font-size:11px}
+.oval i:first-child{background:#e5484d}.oval i:last-child{background:#2e7df6}.oval:after{content:"";position:absolute;left:25px;top:5px;width:2px;height:20px;background:#fff}
+#cwrap{flex:1;position:relative;min-height:120px}canvas{position:absolute;inset:0;touch-action:none}
+.panel{background:#1e2228;border-radius:16px 16px 0 0;padding:0 14px 10px;display:none;max-height:62%;overflow-y:auto}.tgl{display:flex;align-items:center;justify-content:center;position:relative;min-height:40px;cursor:pointer}.tgl .tx{position:absolute;right:0;color:#4c8df6;font-weight:bold;font-size:13px}.vol{display:flex;align-items:center;border:1px solid #3a3f47;border-radius:8px;padding:0 4px 0 14px;height:52px;margin:8px 0}.vol .l{flex:1;font-size:15px}.vol .b{width:44px;height:44px;display:flex;align-items:center;justify-content:center;color:#4c8df6;font-size:24px;font-weight:bold;cursor:pointer}.vol input{width:76px;background:none;border:0;color:#fff;font-weight:bold;font-size:17px;text-align:center;outline:0}.stick{position:sticky;bottom:0;background:#1e2228;padding-bottom:2px}.handle{width:36px;height:4px;background:#555b63;border-radius:2px;margin:8px auto;cursor:pointer}
+.ph{display:flex;align-items:center}.ph .s{color:#4c8df6;font-weight:bold;font-size:20px}.ph .p{color:#4c8df6;font-weight:bold;font-size:18px;margin-left:12px}
+.tabs{display:flex;gap:16px;overflow-x:auto;white-space:nowrap;padding:8px 0;scrollbar-width:none}.tabs span{color:#c8ccd2;font-size:15px;cursor:pointer}.tabs span.on{color:#4c8df6;font-weight:bold}
+.field{display:flex;align-items:center;border:1px solid #3a3f47;border-radius:8px;padding-left:14px;height:52px;margin:8px 0}.field .l{flex:1;font-size:15px}.field .v{font-weight:bold;font-size:16px}
+.st{display:flex;flex-direction:column;width:40px;align-items:center;color:#8a9099;cursor:pointer;line-height:18px;user-select:none}.rm{color:#8a9099;margin:0 8px;cursor:pointer}
+.add{height:46px;border-radius:8px;background:#26364f;color:#4c8df6;display:flex;align-items:center;justify-content:center;margin:8px 0;cursor:pointer}
+.row{display:flex;gap:8px;align-items:center}.muted{color:#8a9099;font-size:12px}.blue{color:#4c8df6}
+.btn{flex:1;height:50px;border:0;border-radius:8px;color:#fff;font-size:15px;cursor:pointer}.ob{height:50px;background:none;border:1px solid #666;border-radius:8px;color:#ddd;padding:0 14px;cursor:pointer}
+.tog{width:64px;height:36px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-weight:bold;cursor:pointer}
+.nav{display:flex;background:#15181d}.nav div{flex:1;text-align:center;padding:8px 0 6px;color:#8a9099;font-size:12px;cursor:pointer}.nav div.on{color:#4c8df6}.nav i{display:block;font-style:normal;font-size:18px}
+.pl{border-radius:8px;padding:0 6px;color:#fff}.page{flex:1;overflow:auto;background:#0e1013;display:none}
+.prow{display:flex;padding:10px 14px;background:#15181d;border-bottom:1px solid #23272e}.sec{color:#8a9099;font-size:13px;padding:8px 14px}
+.dlg{position:absolute;inset:0;background:#0009;display:none;align-items:center;justify-content:center;z-index:9}.dlg>div{background:#2a2f37;padding:18px;border-radius:14px;width:320px;white-space:pre-line}
+.cb{width:54px;height:34px;border-radius:6px;margin-right:4px;display:flex;flex-direction:column;align-items:center;justify-content:center;color:#fff;font-weight:bold;font-size:11px;line-height:1.25;cursor:pointer;user-select:none}.cb small{font-size:10px;font-weight:normal}
+.cb.buy{background:#2e7df6}.cb.sell{background:#e5484d}.cb.off{background:#2a2f37;color:#5c626b;cursor:default}
+.sw{width:46px;height:26px;border-radius:13px;background:#444;position:relative;cursor:pointer;flex:none}.sw:after{content:"";position:absolute;top:3px;left:3px;width:20px;height:20px;border-radius:10px;background:#fff;transition:.15s}.sw.on{background:#4c8df6}.sw.on:after{left:23px}
+.warn{color:#ffd54f;font-size:12px;margin-top:4px}
+</style>
+<div id="app">
+ <div id="chartTab" style="display:flex;flex-direction:column;flex:1;min-height:0">
+  <div class="top"><div class="t"><div class="sym">EURUSD</div><div style="font-size:12px" id="tfl">H1</div></div><div class="cb" id="cbS"></div><div class="cb" id="cbB"></div><span class="tfb" id="tfb">H1</span><div class="oval" id="oval"><i>▼</i><i>▲</i></div></div>
+  <div id="cwrap"><canvas id="c"></canvas><div id="jump" title="回到最新" style="position:absolute;right:84px;bottom:12px;width:40px;height:40px;border-radius:20px;background:#2a2f37cc;display:none;align-items:center;justify-content:center;cursor:pointer;font-weight:bold">»</div><div style="position:absolute;left:6px;bottom:6px;font-size:10px;color:#8a9099"><span id="mode"></span> · <span id="hist">已加载 150 根</span></div></div>
+  <div id="obar" style="display:none;position:absolute;left:8px;right:8px;bottom:6px;z-index:8;background:#252a31f0;border:1px solid #ffb300;border-radius:12px;padding:8px 12px"></div>
+  <div class="panel" id="panel"></div>
+ </div>
+ <div class="page" id="tradeTab"></div>
+ <div class="page" id="setTab"></div>
+ <div class="nav" id="nav"></div>
+ <div class="dlg" id="cdlg"><div id="cbox"></div></div>
+ <div class="dlg" id="dlg"><div><b id="dt"></b><p id="sum"></p><div class="row" style="justify-content:flex-end"><button class="ob" id="no">取消</button><button class="ob" id="yes" style="color:#4c8df6">确认</button></div></div></div>
+</div>
+<script>
+const $=id=>document.getElementById(id),cv=$('c'),g=cv.getContext('2d'),pt=1e-5,pip=1e-4,spread=8*pt,AX=72,R=v=>Math.round(v/pt)*pt,F=v=>v==null?'—':v.toFixed(5);
+let bid=1.12250,cs=[],tab=1,open=false,sheet=false,expanded=false,ptab='PREP',prepSide='BUY',lots='0.01',L={entry:null,slim:null,tp:null,sl:null},tpOn=false,slOn=false,exp='直到取消',drag=null,grab=0,pick=null,positions=[],orders=[],balance=5000,nextId=58956001;
+const TABS=[['PREP','市价预备单'],['MARKET','市场执行'],['BUY_LIMIT','买入限价'],['SELL_LIMIT','卖出限价'],['BUY_STOP','买入止损'],['SELL_STOP','卖出止损'],['BUY_STOP_LIMIT','买入止损限价'],['SELL_STOP_LIMIT','卖出止损限价']];
+(function(){let c=bid;for(let i=0;i<150;i++){const o=c-(Math.random()-.5)*.0012;cs.unshift({o,c,h:Math.max(o,c)+Math.random()*.0004,l:Math.min(o,c)-Math.random()*.0004});c=o}})();
+const ask=()=>bid+spread,pend=()=>!['PREP','MARKET'].includes(ptab),side=()=>pend()?(ptab.startsWith('BUY')?'BUY':'SELL'):prepSide,sl_=()=>ptab.endsWith('STOP_LIMIT'),exitRef=()=>side()==='BUY'?bid:ask(),entryRef=()=>side()==='BUY'?ask():bid;
+const base=()=>pend()?(sl_()?L.slim:L.entry):exitRef(),linesOn=()=>open&&sheet&&ptab!=='MARKET',lbl=k=>TABS.find(t=>t[0]===k)[1];
+function usd(v){return v==null?'— USD':v.toFixed(2)+' USD'}
+function pnlAt(px){const e=pend()?(sl_()?L.slim:L.entry):entryRef();return Math.round((side()==='BUY'?px-e:e-px)*(+lots)*1e5*100)/100}
+function pnl(p){const cur=p.side==='BUY'?bid:ask();return Math.round((p.side==='BUY'?cur-p.open:p.open-cur)*p.vol*1e5*100)/100}
+function match(){positions=positions.filter(p=>{const cur=p.side==='BUY'?bid:ask(),tp=p.tp!=null&&(p.side==='BUY'?cur>=p.tp:cur<=p.tp),sl=p.sl!=null&&(p.side==='BUY'?cur<=p.sl:cur>=p.sl);if(tp||sl){balance+=pnl(p);toast((tp?'✅ 止盈':'⛔ 止损')+' #'+p.id+' 已平仓');return false}return true})}
+// ---- MT5 式视口：scroll=从最新往回滚的根数（0=跟随），bw=K线宽，manual=手动价格刻度 ----
+const PAD=3;let vp={bw:14,scroll:0,manual:false,hi:0,lo:0},cross=null,flingId=0,lastTap=0;
+const PW=()=>cv.width-AX,X=i=>PW()-(cs.length-1-i+PAD-vp.scroll)*vp.bw-vp.bw/2,IDX=x=>(cs.length-1+PAD-vp.scroll)-(PW()-x-vp.bw/2)/vp.bw;
+function vis(){return[Math.max(0,Math.floor(IDX(0))),Math.min(cs.length-1,Math.ceil(IDX(PW())))]}
+function clampS(){vp.scroll=Math.min(Math.max(vp.scroll,-(PW()/vp.bw)*.5),cs.length-1+PAD-2)}
+function panX(dx){vp.scroll+=dx/vp.bw;clampS();if(vis()[0]<30)loadOlder()}
+function panY(dy){if(!vp.manual)return;const d=dy/cv.height*(hi-lo);vp.hi=hi+d;vp.lo=lo+d}
+function zoomAt(f,fx){const idx=IDX(fx);vp.bw=Math.min(80,Math.max(3,vp.bw*f));vp.scroll=(fx-PW()+vp.bw/2)/vp.bw+(cs.length-1-idx+PAD);clampS()}
+function scaleY(f){const m=(hi+lo)/2,h=(hi-lo)/2*f;vp.manual=true;vp.hi=m+h;vp.lo=m-h}
+function loadOlder(){let c=cs[0].o;const add=[];for(let i=0;i<200;i++){const o=c-(Math.random()-.5)*.0012;add.unshift({o,c,h:Math.max(o,c)+Math.random()*.0004,l:Math.min(o,c)-Math.random()*.0004});c=o}cs=add.concat(cs);$('hist').textContent='已加载 '+cs.length+' 根'}
+let hi,lo;function range(){if(vp.manual){hi=vp.hi;lo=vp.lo;return}const [a,b]=vis(),v=cs.slice(a,b+1).flatMap(k=>[k.h,k.l]);if(vp.scroll<=.5)v.push(...Object.values(L).filter(x=>x!=null&&linesOn()));if(!v.length)v.push(bid);hi=Math.max(...v);lo=Math.min(...v);const p=Math.max((hi-lo)*.08,5*pip);hi+=p;lo-=p}
+const Y=v=>(hi-v)/(hi-lo)*cv.height,P=y=>hi-y/cv.height*(hi-lo);
+function size(){const r=$('cwrap').getBoundingClientRect();cv.width=r.width;cv.height=r.height}
+function tag(y,t,bg){g.fillStyle=bg;g.fillRect(cv.width-AX+2,y-10,AX-4,20);g.fillStyle='#000';g.font='bold 11px sans-serif';g.fillText(t,cv.width-AX+6,y+4)}
+const tgl=()=>`<div class="row" style="gap:10px;margin:8px 0"><div data-a="ttp" style="cursor:pointer;padding:8px 16px;border-radius:18px;font-weight:bold;${tpOn?'background:#4caf50;color:#fff':'background:#2a2f36;color:#8a9099;border:1px solid #3a3f47'}">${tpOn?'●':'○'} TP 止盈</div><div data-a="tsl" style="cursor:pointer;padding:8px 16px;border-radius:18px;font-weight:bold;${slOn?'background:#f44336;color:#fff':'background:#2a2f36;color:#8a9099;border:1px solid #3a3f47'}">${slOn?'●':'○'} SL 止损</div>${ptab==='PREP'&&!tpOn?'<span style="color:#ffd54f;font-size:12px">需点亮 TP</span>':''}</div>`;
+
+// ---- v9：委托订单（挂单）线可直接拖动改价：松手 → 校验 → 确认条（旧价 → 新价）→ 确认修改 / 取消 ----
+let od=null,prop=null;
+const okey=o=>o.k||(TABS.find(t=>t[1]===o.type)||[])[0],oside=o=>okey(o).startsWith('BUY')?'BUY':'SELL',osl=o=>okey(o).endsWith('STOP_LIMIT');
+const ofield=k=>k==='entry'?'price':k,ocur=(o,k)=>o[ofield(k)];
+const oval=(o,k)=>od&&od.o===o&&od.k===k?od.v:prop&&prop.o===o&&prop.k===k?prop.v:ocur(o,k);
+const ONAME={entry:'价格',slim:'限价',tp:'止盈 TP',sl:'止损 SL'},OCOL={entry:'#ffb300',slim:'#ba68c8',tp:'#4caf50',sl:'#f44336'};
+function olines(){const r=[];orders.forEach(o=>{['entry','slim','tp','sl'].forEach(k=>{if(k==='slim'&&!osl(o))return;const v=oval(o,k);if(v!=null)r.push({o,k,v,act:(od&&od.o===o&&od.k===k)||(prop&&prop.o===o&&prop.k===k)})})});return r}
+function opnl(o,v){const e=osl(o)?oval(o,'slim'):oval(o,'entry');return Math.round((oside(o)==='BUY'?v-e:e-v)*o.vol*1e5*100)/100}
+function ovalid(o,k,v){const E=k==='entry'?v:o.price,S=k==='slim'?v:o.slim,T=k==='tp'?v:o.tp,SL=k==='sl'?v:o.sl,key=okey(o),a=ask(),b=bid,buy=oside(o)==='BUY';let e=null;
+ if(k==='entry'){if(key==='BUY_LIMIT'&&E>=a)e='Buy Limit 价格必须低于 Ask '+F(a);else if(key==='SELL_LIMIT'&&E<=b)e='Sell Limit 价格必须高于 Bid '+F(b);else if(key.startsWith('BUY_STOP')&&E<=a)e='Buy Stop 触发价必须高于 Ask '+F(a);else if(key.startsWith('SELL_STOP')&&E>=b)e='Sell Stop 触发价必须低于 Bid '+F(b)}
+ if(!e&&(k==='entry'||k==='slim')&&osl(o)){if(key==='BUY_STOP_LIMIT'&&S>=E)e='Buy Stop Limit 的限价必须低于触发价';if(key==='SELL_STOP_LIMIT'&&S<=E)e='Sell Stop Limit 的限价必须高于触发价'}
+ if(!e){const r=osl(o)?S:E;if(buy){if(T!=null&&T<=r)e='TP 必须高于开仓价';else if(SL!=null&&SL>=r)e='SL 必须低于开仓价'}else{if(T!=null&&T>=r)e='TP 必须低于开仓价';else if(SL!=null&&SL<=r)e='SL 必须高于开仓价'}
+  if(e&&(k==='entry'||k==='slim'))e='无法移动：'+e+'（TP/SL 价格保持不变）'}
+ return e}
+function propose(o,k,v){v=R(v);const old=ocur(o,k);prop=null;if(Math.abs(v-old)<pt/2){render();return}const e=ovalid(o,k,v);if(e){toast('❌ '+e);render();return}prop={o,k,old,v};render()}
+function obar(){const b=$('obar');if(!prop||!orders.includes(prop.o)){prop=null;b.style.display='none';return}const o=prop.o,p=prop,tp=o.tp!=null?`TP ${F(o.tp)} → ${usd(opnl(o,o.tp))}`:'',sl=o.sl!=null?`SL ${F(o.sl)} → ${usd(opnl(o,o.sl))}`:'';
+ b.style.display='block';b.innerHTML=`<div class="muted" style="font-size:11px">修改挂单</div><div style="font-weight:bold">#${o.id} ${o.type}  ${ONAME[p.k]}  ${F(p.old)} → ${F(p.v)}</div>${tp||sl?`<div class="muted" style="font-size:11px">${tp}${tp&&sl?'    ':''}${sl}</div>`:''}<div class="row" style="gap:10px;margin-top:6px"><button class="ob" id="omno" style="flex:1;height:40px;color:#8a9099">取消</button><button class="btn" id="omyes" style="height:40px;background:#4c8df6">确认修改</button></div>`;
+ $('omno').onclick=()=>{prop=null;render()};$('omyes').onclick=()=>{o[ofield(p.k)]=p.v;toast(`✅ 已修改挂单 #${o.id} ${ONAME[p.k]} ${F(p.old)} → ${F(p.v)}`);prop=null;render()}}
+function drawOrders(W){g.font='bold 11px sans-serif';olines().forEach(({o,k,v,act})=>{const y=Y(v);if(!act&&(y<-4||y>cv.height+4))return;const inv=od&&od.o===o&&od.k===k&&ovalid(o,k,v),col=inv?'#ff5252':OCOL[k];
+  g.strokeStyle=col;g.lineWidth=act?4:1.5;g.setLineDash(act?[]:[6,6]);g.beginPath();g.moveTo(0,y);g.lineTo(W,y);g.stroke();g.setLineDash([]);g.lineWidth=1;
+  const t=`#${String(o.id).slice(-4)} `+(k==='entry'?`${o.type}${osl(o)?' 触发':''} ${o.vol}`:k==='slim'?'限价':k)+(act?'  '+F(v):'')+(k==='tp'||k==='sl'?'  '+usd(opnl(o,v)):'')+(inv?'  ✕ 价格无效':'');
+  const tw=g.measureText(t).width;g.fillStyle=col;g.fillRect(4,y-17,tw+12,16);g.fillStyle='#fff';g.fillText(t,10,y-5);if(act)tag(Math.min(Math.max(y,10),cv.height-10),F(v),col)})}
+const LINES=()=>[['entry','#ffb300',pend()?lbl(ptab)+(sl_()?' 触发':''):'',linesOn()&&pend()],['slim','#ba68c8','限价',linesOn()&&pend()&&sl_()],['tp','#4caf50','TP',linesOn()&&tpOn],['sl','#f44336','SL',linesOn()&&slOn]];
+function draw(){const W=cv.width-AX;g.fillStyle='#000';g.fillRect(0,0,cv.width,cv.height);g.font='10px sans-serif';
+ for(let i=0;i<=6;i++){const p=hi-(hi-lo)*i/6,y=Y(p);g.strokeStyle='#1e2329';g.setLineDash([3,3]);g.beginPath();g.moveTo(0,y);g.lineTo(W,y);g.stroke();g.setLineDash([]);g.fillStyle='#9aa0a6';g.fillText(p.toFixed(5),W+6,y+3)}
+ const w=vp.bw,[va,vb]=vis();g.save();g.beginPath();g.rect(0,0,W,cv.height);g.clip();for(let i=va;i<=vb;i++){const k=cs[i],x=X(i);g.strokeStyle=g.fillStyle=k.c>=k.o?'#26a69a':'#ef5350';g.beginPath();g.moveTo(x,Y(k.h));g.lineTo(x,Y(k.l));g.stroke();const t=Y(Math.max(k.o,k.c));g.fillRect(x-w*.35,t,w*.7,Math.max(Y(Math.min(k.o,k.c))-t,1))}g.restore();
+ positions.forEach(p=>{const y=Y(p.open),col=p.side==='BUY'?'#2e7df6':'#e5484d';g.setLineDash([6,6]);g.strokeStyle=col;g.beginPath();g.moveTo(0,y);g.lineTo(W,y);g.stroke();g.setLineDash([]);
+  const t=`#${String(p.id).slice(-8)} ${p.side.toLowerCase()} ${p.vol.toFixed(2)}  ${usd(pnl(p))}`;g.font='bold 11px sans-serif';const tw=g.measureText(t).width;g.fillStyle=col;g.fillRect(4,y-17,tw+12,16);g.fillStyle='#fff';g.fillText(t,10,y-5);
+  g.fillStyle='#2a2f37';g.fillRect(tw+16,y-17,16,16);g.strokeStyle=col;g.lineWidth=1.5;g.strokeRect(tw+16,y-17,16,16);g.lineWidth=1;g.fillStyle='#fff';g.fillText('✕',tw+19,y-5);p._hit={y,lab:[4,y-17,tw+12,16],btn:[tw+16,y-17,16,16]};
+  if(!open){[[p.tp,'#4caf50','tp'],[p.sl,'#f44336','sl']].forEach(([v,c,n])=>{if(v==null)return;g.setLineDash([6,6]);g.strokeStyle=c;g.beginPath();g.moveTo(0,Y(v));g.lineTo(W,Y(v));g.stroke();g.setLineDash([]);g.fillStyle=c;g.fillRect(4,Y(v)-17,60,16);g.fillStyle='#fff';g.fillText(n+' #'+String(p.id).slice(-4),8,Y(v)-5)})}});
+ drawOrders(W);
+ g.strokeStyle='#26a69a';g.beginPath();g.moveTo(0,Y(bid));g.lineTo(W,Y(bid));g.stroke();tag(Y(bid),bid.toFixed(5),'#26a69a');
+ for(const [k,col,name,vis] of LINES()){const v=L[k];if(!vis||v==null)continue;const ref=k==='entry'?entryRef():k==='slim'?L.entry:base();
+  g.strokeStyle=col;g.lineWidth=drag===k?4:2;g.beginPath();g.moveTo(0,Y(v));g.lineTo(W,Y(v));g.stroke();g.lineWidth=1;g.fillStyle=col;g.font='bold 11px sans-serif';
+  g.fillText(`${name} ${F(v)}  ${k==='tp'||k==='sl'?usd(pnlAt(v)):Math.round(Math.abs(v-ref)/pip*10)+' pts'}`,6,Y(v)-6);tag(Math.min(Math.max(Y(v),10),cv.height-10),F(v),col)}
+ if(cross){g.setLineDash([4,4]);g.strokeStyle='#fffa';g.beginPath();g.moveTo(0,cross.y);g.lineTo(W,cross.y);g.moveTo(cross.x,0);g.lineTo(cross.x,cv.height);g.stroke();g.setLineDash([]);tag(cross.y,F(P(cross.y)),'#fff');
+  const i=Math.round(IDX(cross.x));if(cs[i]){const k=cs[i],d=new Date(Date.now()-(cs.length-1-i)*3600e3),t=`${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')} ${String(d.getHours()).padStart(2,'0')}:00  O ${F(k.o)} H ${F(k.h)} L ${F(k.l)} C ${F(k.c)}`;g.font='bold 11px sans-serif';const tw=g.measureText(t).width,lx=Math.min(Math.max(cross.x-tw/2,0),W-tw);g.fillStyle='#fff';g.fillRect(lx-4,cv.height-20,tw+8,18);g.fillStyle='#000';g.fillText(t,lx,cv.height-7)}}
+ $('jump').style.display=vp.scroll>2?'flex':'none';$('mode').textContent=(vp.manual?'手动刻度':'自动适配')+(vp.scroll>.5?' · 回看':' · 跟随最新')}
+function validate(){const b=bid,a=ask(),buy=side()==='BUY';if(!(+lots>0))return'交易量无效';if(ptab==='PREP'&&!tpOn)return'市价预备单必须设置止盈：请点亮 TP 按钮';
+ if(pend()){const e=L.entry;if(ptab==='BUY_LIMIT'&&e>=a)return'Buy Limit 价格必须低于 Ask';if(ptab==='SELL_LIMIT'&&e<=b)return'Sell Limit 价格必须高于 Bid';if(ptab.startsWith('BUY_STOP')&&e<=a)return'Buy Stop 触发价必须高于 Ask';if(ptab.startsWith('SELL_STOP')&&e>=b)return'Sell Stop 触发价必须低于 Bid';
+  if(ptab==='BUY_STOP_LIMIT'&&L.slim>=e)return'限价必须低于触发价';if(ptab==='SELL_STOP_LIMIT'&&L.slim<=e)return'限价必须高于触发价'}
+ const r=base(),n=pend()?'开仓价':'现价';if(buy){if(tpOn&&L.tp<=r)return'TP 必须高于'+n;if(slOn&&L.sl>=r)return'SL 必须低于'+n}else{if(tpOn&&L.tp>=r)return'TP 必须低于'+n;if(slOn&&L.sl<=r)return'SL 必须高于'+n}return null}
+const field=(l,v,col,id,rm)=>`<div class="field"><span class="l">${l}</span><span class="v" style="color:${col}">${v}</span><span class="st"><span data-a="up_${id}">⌃</span><span data-a="dn_${id}">⌄</span></span>${rm?`<span class="rm" data-a="rm_${id}">✕</span>`:''}</div>`;
+function panel(){const p=$('panel');p.style.display=open?'block':'none';if(!open)return;if(!sheet){p.style.borderRadius='0';p.innerHTML=`<div class="row"><span class="muted" style="flex:1;font-size:12px">选择订单类型</span><span class="rm" data-a="closeall">✕</span></div><div class="tabs">${TABS.map(([k,l])=>`<span data-t="${k}">${l}</span>`).join('')}</div>`;return}p.style.borderRadius='';const buy=side()==='BUY',err=validate(),mk=ptab==='MARKET';let h=`<div class="tgl" data-a="exp"><div class="handle" style="margin:8px auto"></div><span class="tx">${expanded?'收起 ▲':'展开 ▼'}</span></div>
+ <div class="ph"><span class="s">EURUSD ⇕</span><span style="flex:1"></span><span class="p">${F(bid)}</span><span class="p">${F(ask())}</span><span class="rm" data-a="close" style="margin-left:10px">✕</span></div>
+ <div style="font-weight:bold;font-size:16px;margin:6px 0">下单 · ${(TABS.find(t=>t[0]===ptab)||[0,''])[1]}</div>`;
+ h+=`<div class="vol"><span class="l">交易量</span><span class="b" data-a="ldn">−</span><input id="volin" inputmode="decimal" value="${lots}"><span class="b" data-a="lup">+</span><span style="margin-right:10px">手</span></div>`;
+ if(expanded||mk){h+=`
+  <input type="range" min="1" max="100" value="${Math.round(+lots*100)}" style="width:100%" data-r="1"><div class="row"><span class="blue" style="font-size:12px">预付款</span><span style="font-size:12px;flex:1">≈ ${(+lots*1e5*bid/100).toFixed(2)} USD</span><span style="font-size:12px">可用: ${(balance-positions.reduce((s,p)=>s+p.vol*1e5*bid/100,0)).toFixed(2)} USD</span></div>`;
+  if(ptab==='PREP')h+=`<div class="row" style="margin-top:8px"><div class="tog" data-a="buy" style="flex:1;${prepSide==='BUY'?'background:#2e7df6;color:#fff':'border:1px solid #2e7df6;color:#2e7df6'}">买入</div><div class="tog" data-a="sell" style="flex:1;${prepSide==='SELL'?'background:#e5484d;color:#fff':'border:1px solid #e5484d;color:#e5484d'}">卖出</div></div>`;
+  if(pend()){h+=field(sl_()?'触发价':'价格',F(L.entry),'#ffb300','entry');if(sl_())h+=field('限价',F(L.slim),'#ba68c8','slim')}
+  if(!mk){h+=tgl();if(tpOn)h+=field('止盈 <span class="muted" style="font-size:12px">预计 '+usd(pnlAt(L.tp))+'</span>',F(L.tp),'#4caf50','tp');if(slOn)h+=field('止损 <span class="muted" style="font-size:12px">预计 '+usd(pnlAt(L.sl))+'</span>',F(L.sl),'#f44336','sl')}
+  else h+=`<div class="muted" style="margin:6px 0">如需在图上拖动设置 TP/SL，请使用 “市价预备单”</div>`;
+  if(pend())h+=`<div style="margin:6px 0">超期: <span class="blue">${exp} ⌄</span></div>`;h+=`<div style="margin:6px 0">评论: <span class="blue">添加注释</span></div>`}
+ else{h+=`<div class="row">${ptab==='PREP'?`<div class="tog" data-a="buy" style="${prepSide==='BUY'?'background:#2e7df6;color:#fff':'border:1px solid #2e7df6;color:#2e7df6'}">买入</div><div class="tog" data-a="sell" style="${prepSide==='SELL'?'background:#e5484d;color:#fff':'border:1px solid #e5484d;color:#e5484d'}">卖出</div>`:''}</div>
+  <div class="row" style="gap:16px;margin-top:6px">${pend()?`<div><div class="muted">${sl_()?'触发':'价格'}</div><b style="color:#ffb300">${F(L.entry)}</b></div>`:''}${pend()&&sl_()?`<div><div class="muted">限价</div><b style="color:#ba68c8">${F(L.slim)}</b></div>`:''}
+  ${tpOn?`<div><div class="muted">止盈 TP</div><b style="color:#4caf50">${F(L.tp)}</b><div style="font-size:11px;color:${pnlAt(L.tp)>=0?'#4c8df6':'#e5484d'}">${usd(pnlAt(L.tp))}</div></div>`:''}${slOn?`<div><div class="muted">止损 SL</div><b style="color:#f44336">${F(L.sl)}</b><div style="font-size:11px;color:${pnlAt(L.sl)>=0?'#4c8df6':'#e5484d'}">${usd(pnlAt(L.sl))}</div></div>`:''}</div>${mk?'':tgl()}`}
+ if(err&&!mk)h+=`<div class="warn">⚠ ${err}</div>`;
+ h+=mk?`<div class="row stick" style="margin-top:10px"><button class="btn" style="background:#e5484d;height:58px" data-a="msell">卖出<br>${F(bid)}</button><button class="btn" style="background:#2e7df6;height:58px" data-a="mbuy">买入<br>${F(ask())}</button></div>`
+ :`<div class="row stick" style="margin-top:10px"><button class="ob" data-a="reset">重置</button><button class="btn" data-a="go" style="background:${err?'#4a4f57':buy?'#2e7df6':'#e5484d'}">${ptab==='PREP'?`下单 ${buy?'买入':'卖出'}（市价预备单）`:'下单 '+lbl(ptab)}</button></div>`;
+ p.innerHTML=h;const vi=$('volin');if(vi)vi.oninput=()=>{lots=vi.value.replace(/[^0-9.]/g,'')}}
+function selTab(k){ptab=k;const p=pip,a=ask(),b=bid;if(k==='PREP'){const m=exitRef();L={entry:null,slim:null,tp:m,sl:m};tpOn=slOn=true;expanded=false}else if(k==='MARKET'){tpOn=slOn=false;expanded=true}
+ else{const buy=k.startsWith('BUY');L.entry=R(k==='BUY_LIMIT'?a-20*p:k==='SELL_LIMIT'?b+20*p:buy?a+20*p:b-20*p);L.slim=k.endsWith('STOP_LIMIT')?R(L.entry+(buy?-10:10)*p):null;tpOn=slOn=false;expanded=false}}
+function defLvl(tp){if(ptab==='PREP')return exitRef();const d=side()==='BUY'?1:-1;return R(base()+(tp?1:-1)*d*(tp?20:15)*pip)}
+$('panel').onclick=e=>{const t=e.target.closest('[data-t]');if(t){selTab(t.dataset.t);sheet=true;render();return}const el=e.target.closest('[data-a]');if(!el)return;const a=el.dataset.a,m=exitRef();
+ if(a==='exp')expanded=!expanded;if(a==='close'){sheet=false;tpOn=slOn=false}if(a==='closeall')open=false;if(a==='lup')lots=(+lots+.01).toFixed(2);if(a==='ldn')lots=Math.max(.01,+lots-.01).toFixed(2);
+ if(a==='buy'||a==='sell'){const s=a.toUpperCase();if(s!==prepSide){prepSide=s;['tp','sl'].forEach(k=>{if(L[k]!=null)L[k]=R(2*m-L[k])})}}
+ if(a==='addsl'||(a==='tsl'&&!slOn)){slOn=true;L.sl=L.sl??defLvl(false)}else if(a==='tsl'||a==='rm_sl')slOn=false;
+ if(a==='addtp'||(a==='ttp'&&!tpOn)){tpOn=true;L.tp=L.tp??defLvl(true)}else if(a==='ttp'||a==='rm_tp')tpOn=false;
+ if(a.startsWith('up_')||a.startsWith('dn_')){const k=a.slice(3),d=(a[0]==='u'?1:-1)*pip;if(k==='entry'){['entry','slim','tp','sl'].forEach(x=>{if(L[x]!=null)L[x]=R(L[x]+d)})}else L[k]=R(L[k]+d)}
+ if(a==='reset')selTab(ptab);if(a==='msell'||a==='mbuy'){positions.push({id:nextId++,side:a==='mbuy'?'BUY':'SELL',vol:+lots,open:a==='mbuy'?ask():bid,tp:null,sl:null});toast('✅ 已成交')}
+ if(a==='go'){const err=validate();if(err){toast('❌ '+err);return}$('dt').textContent=pend()?'确认挂单':'确认下单';$('sum').textContent=`${ptab==='PREP'?(prepSide==='BUY'?'市价买入':'市价卖出'):lbl(ptab)} EURUSD ${lots} 手\n${pend()?'价格: '+F(L.entry)+'\n':''}止盈 TP: ${tpOn?F(L.tp):'无'}\n止损 SL: ${slOn?F(L.sl):'无'}`;$('dlg').style.display='flex'}
+ render()};
+$('panel').oninput=e=>{if(e.target.dataset.r){lots=(e.target.value/100).toFixed(2);render()}};
+$('no').onclick=()=>$('dlg').style.display='none';
+$('yes').onclick=()=>{$('dlg').style.display='none';if(ptab==='PREP')positions.push({id:nextId++,side:prepSide,vol:+lots,open:prepSide==='BUY'?ask():bid,tp:tpOn?L.tp:null,sl:slOn?L.sl:null});else orders.push({id:nextId++,k:ptab,type:lbl(ptab),vol:+lots,price:L.entry,slim:sl_()?L.slim:null,tp:tpOn?L.tp:null,sl:slOn?L.sl:null});open=false;sheet=false;toast('✅ 下单成功');render()};
+$('oval').onclick=()=>{open=!open;sheet=false;tpOn=slOn=false;render()};
+function toast(t){let d=document.createElement('div');d.textContent=t;d.style.cssText='position:absolute;left:12px;right:12px;bottom:70px;background:#333;padding:10px;border-radius:8px;z-index:20';$('app').appendChild(d);setTimeout(()=>d.remove(),2000)}
+const NAV=[['行情','⇅'],['图表','▮▯'],['交易','〽'],['历史','🕘'],['设置','⚙']];
+function nav(){const fl=positions.reduce((s,p)=>s+pnl(p),0);$('nav').innerHTML=NAV.map(([l,i],n)=>`<div data-n="${n}" class="${n===tab?'on':''}"><i>${i}</i>${n===2&&positions.length?`<span class="pl" style="background:${fl>=0?'#1e5631':'#6b2326'}">${fl.toFixed(2)} USD</span>`:l}</div>`).join('')}
+$('nav').onclick=e=>{const d=e.target.closest('[data-n]');if(d){tab=+d.dataset.n;render()}};
+function trade(){const fl=positions.reduce((s,p)=>s+pnl(p),0),eq=balance+fl,mg=positions.reduce((s,p)=>s+p.vol*1e5*bid/100,0),row=(l,v)=>`<div class="row" style="padding:2px 0"><span class="muted" style="flex:1;font-size:14px">${l}</span><span>${v.toFixed(2)}</span></div>`;
+ $('tradeTab').innerHTML=`<div style="padding:14px"><div style="font-size:22px;font-weight:bold;color:${fl>=0?'#2e7dff':'#ff4d4f'}">${fl.toFixed(2)} USD</div>${row('余额',balance)}${row('净值',eq)}${row('预付款',mg)}${row('可用预付款',eq-mg)}${mg?row('预付款比例 (%)',eq/mg*100):''}<div class="muted">DEMO · 演示模式 · 1:100</div></div>
+ <div class="sec">持仓 (${positions.length})</div>${positions.length?positions.map(p=>`<div class="prow"><div style="flex:1"><b>EURUSD</b> <span style="color:${p.side==='BUY'?'#2e7dff':'#ff4d4f'}">${p.side.toLowerCase()} ${p.vol}</span><div class="muted">${F(p.open)} → ${F(p.side==='BUY'?bid:ask())}</div><div class="muted">TP ${F(p.tp)}   SL ${F(p.sl)}</div></div><b style="color:${pnl(p)>=0?'#2e7dff':'#ff4d4f'}">${usd(pnl(p))}</b></div>`).join(''):'<div class="muted" style="padding:10px 14px">无持仓</div>'}
+ <div class="sec">挂单 (${orders.length})</div>${orders.length?orders.map(o=>`<div class="prow"><div style="flex:1"><b>EURUSD</b> <span style="color:#2e7dff">${o.type} ${o.vol}</span><div class="muted">@ ${F(o.price)}${o.tp!=null?'   TP '+F(o.tp):''}${o.sl!=null?'   SL '+F(o.sl):''}</div></div><span class="muted">#${o.id}</span></div>`).join(''):'<div class="muted" style="padding:10px 14px">无挂单</div>'}`}
+// ---- v8：右上角一键平仓（当前品种的全部买入 / 卖出持仓），与 App 的 BatchClose 逻辑一致 ----
+let confirmBatch=true,batchBusy=false;
+const sel=sd=>positions.filter(p=>p.side===sd),sumOf=a=>({n:a.length,lots:Math.round(a.reduce((s,p)=>s+p.vol,0)*100)/100,pl:Math.round(a.reduce((s,p)=>s+pnl(p),0)*100)/100}),SL_={BUY:'买入',SELL:'卖出'};
+function cbtns(){for(const [id,sd] of [['cbS','SELL'],['cbB','BUY']]){const a=sel(sd),on=a.length>0&&!batchBusy,m=sumOf(a),e=$(id);e.className='cb '+(on?sd.toLowerCase():'off');e.dataset.sd=sd;e.innerHTML=`<span>${sd==='BUY'?'平买':'平卖'}${a.length?' ×'+a.length:''}</span><small>${a.length?(m.pl>=0?'+':'')+m.pl.toFixed(2):'—'}</small>`}}
+function batchAsk(sd){if(batchBusy||!sel(sd).length)return;if(confirmBatch)batchDlg(sd);else batchRun(sd)}
+function batchDlg(sd){const m=sumOf(sel(sd));$('cbox').innerHTML=`<div style="font-size:20px;margin-bottom:12px">一键平仓 EURUSD ${SL_[sd]}</div><div style="line-height:1.7">即将平掉 EURUSD 的全部${SL_[sd]}持仓：\n方向：${SL_[sd]}（${sd.toLowerCase()}）\n持仓数量：<b>${m.n}</b> 笔\n总手数：<b>${m.lots.toFixed(2)}</b> 手\n总浮动盈亏：<b style="color:${m.pl>=0?'#2e7df6':'#e5484d'}">${(m.pl>=0?'+':'')+m.pl.toFixed(2)} USD</b></div><div class="muted" style="margin:10px 0 14px">服务器无批量接口，将逐笔平仓；如有失败会提示成功/失败笔数。</div><div class="row" style="justify-content:flex-end;gap:8px"><button class="ob" id="cno" style="color:#8a9099">取消</button><button id="cyes" style="background:#e5484d;color:#fff;border:0;border-radius:8px;height:46px;padding:0 26px;font-size:16px;font-weight:bold">全部平仓</button></div>`;
+ $('cdlg').style.display='flex';$('cno').onclick=()=>{$('cdlg').style.display='none'};$('cyes').onclick=()=>{$('cdlg').style.display='none';batchRun(sd)}}
+function batchRun(sd){batchBusy=true;const a=sel(sd);a.forEach(p=>{balance+=pnl(p)});positions=positions.filter(p=>p.side!==sd);batchBusy=false;toast('✅ 已平仓 '+a.length+' 笔 EURUSD '+SL_[sd]+'持仓');render()}
+$('cbS').onclick=()=>batchAsk('SELL');$('cbB').onclick=()=>batchAsk('BUY');
+function settings(){$('setTab').innerHTML=`<div style="padding:16px"><div style="font-size:22px;margin-bottom:14px">设置</div><div class="row" style="padding:8px 0"><div style="flex:1"><div>一键平仓前确认</div><div class="muted">图表右上角“平买 / 平卖”按钮；关闭后点击将立即平仓，不再弹窗</div></div><div class="sw ${confirmBatch?'on':''}" id="swc"></div></div></div>`;$('swc').onclick=()=>{confirmBatch=!confirmBatch;settings()}}
+function render(){$('chartTab').style.display=tab===1?'flex':'none';$('tradeTab').style.display=tab===2?'block':'none';$('setTab').style.display=tab===4?'block':'none';nav();if(tab===2)trade();if(tab===4)settings();if(tab===1){cbtns();panel();size();range();draw();obar()}}
+const ptrs=new Map();let G=null;
+const inR=(r,x,y,pad=0)=>x>=r[0]-pad&&x<=r[0]+r[2]+pad&&y>=r[1]-pad&&y<=r[1]+r[3]+pad;
+function hitBtn(x,y){return positions.find(p=>p._hit&&inR(p._hit.btn,x,y,6))}
+function hitPosLine(x,y){if(x>=PW())return null;let b=null,bd=1e9;positions.forEach(p=>{const h=p._hit;if(!h)return;const d=Math.abs(h.y-y);if((d<=16||inR(h.lab,x,y)||inR(h.btn,x,y))&&d<bd){b=p;bd=d}});return b}
+let closing=null;
+function openClose(p){closing=p.id;showClose()}
+function showClose(){const p=positions.find(q=>q.id===closing);if(!p){$('cdlg').style.display='none';closing=null;return}const c=pnl(p),col=p.side==='BUY'?'#2e7df6':'#e5484d';
+ $('cbox').innerHTML=`<div style="font-size:20px;margin-bottom:10px">平仓 #${p.id}</div><div style="font-size:18px;font-weight:bold"><span style="color:#4c8df6">EURUSD</span> <span style="color:${col}">${p.side.toLowerCase()} ${p.vol.toFixed(2)}</span></div><div class="muted" style="margin:8px 0">开仓价 ${F(p.open)}    现价 ${F(p.side==='BUY'?bid:ask())}</div><div style="font-weight:bold;font-size:16px;color:${c>=0?'#2e7df6':'#e5484d'}">浮动盈亏 ${(c>=0?'+':'')+usd(c)}</div><div class="row" style="border:1px solid #3a3f47;border-radius:8px;padding:12px 14px;margin:12px 0 6px"><span style="flex:1">平仓手数</span><b style="color:#8a9099">${p.vol.toFixed(2)}</b><span class="muted"> 手（全部）</span></div><div class="muted" style="font-size:12px;margin-bottom:12px">服务器接口暂不支持部分平仓，将平掉全部手数</div><div class="row" style="justify-content:flex-end;gap:8px"><button class="ob" id="cno" style="color:#8a9099">取消</button><button id="cyes" style="background:#e5484d;color:#fff;border:0;border-radius:8px;height:46px;padding:0 26px;font-size:16px;font-weight:bold">平仓</button></div>`;
+ $('cdlg').style.display='flex';$('cno').onclick=()=>{$('cdlg').style.display='none';closing=null};
+ $('cyes').onclick=()=>{balance+=pnl(p);positions=positions.filter(q=>q.id!==p.id);$('cdlg').style.display='none';closing=null;toast('✅ 已平仓 #'+p.id+' EURUSD '+p.vol.toFixed(2)+' 手');render()}}
+cv.onpointerdown=e=>{cv.setPointerCapture(e.pointerId);ptrs.set(e.pointerId,{x:e.offsetX,y:e.offsetY});flingId++;window.__lastDown=1;
+ if(ptrs.size===2){if(G&&G.lp)clearTimeout(G.lp);cross=null;const [a,b]=[...ptrs.values()];G={k:'pinch',d:Math.abs(a.x-b.x)||1,cx:(a.x+b.x)/2};return}
+ const x=e.offsetX,y=e.offsetY;
+ if(x<PW()){const hb=hitBtn(x,y);if(hb){const od0=olines().some(l=>Math.abs(Y(l.v)-y)<=24);if(!od0){G={k:'cbtn',p:hb,x0:x,y0:y,moved:false};return}}}
+ // v11：挂单线 24px 内即可抓取；TP/SL 编辑线只有“严格更近”才抢；持仓线/标签/✕ 只是点击目标（竖直拖动归挂单线）
+ const oln=x<PW()?olines().map(l=>({...l,d:Math.abs(Y(l.v)-y)})).filter(l=>l.d<=24).sort((a,b)=>a.d-b.d)[0]:null;
+ if(x<PW()){const c=LINES().filter(([k,,,v])=>v&&L[k]!=null).map(([k])=>[k,Math.abs(Y(L[k])-y)]).sort((a,b)=>a[1]-b[1]);
+  if(c.length&&c[0][1]<=24&&(!oln||c[0][1]<oln.d-.5)){const dt=c.find(q=>q[0]==='tp'),ds=c.find(q=>q[0]==='sl');G={k:'line',y0:y,s:{...L}};
+   if(dt&&ds&&dt[1]<24&&ds[1]<24&&Math.abs(dt[1]-ds[1])<6&&['tp','sl'].includes(c[0][0]))pick=y;else{drag=c[0][0];grab=Y(L[drag])-y}return}}
+ if(oln){const tp=hitBtn(x,y)||(()=>{const hp=hitPosLine(x,y);return hp&&!(oln.d<Math.abs(hp._hit.y-y)&&!inR(hp._hit.lab,x,y))?hp:null})();G={k:'oline',ol:oln,x0:x,y0:y,lx:x,ly:y,moved:false,tap:tp};return}
+ G={k:x>=PW()?'axis':'pan',x0:x,y0:y,lx:x,ly:y,moved:false,t:performance.now(),hist:[[performance.now(),x,y]]};
+ if(G.k==='pan')G.lp=setTimeout(()=>{if(G&&!G.moved){G.k='cross';cross={x,y};draw()}},500)};
+cv.onpointermove=e=>{if(!ptrs.has(e.pointerId)||!G)return;ptrs.set(e.pointerId,{x:e.offsetX,y:e.offsetY});const x=e.offsetX,y=e.offsetY;
+ if(G.k==='cbtn'){if(Math.hypot(x-G.x0,y-G.y0)>6)G.moved=true;return}
+ if(G.k==='pinch'){if(ptrs.size<2)return;const [a,b]=[...ptrs.values()],d=Math.abs(a.x-b.x)||1,cx=(a.x+b.x)/2;zoomAt(d/G.d,cx);panX(cx-G.cx);G.d=d;G.cx=cx;range();draw();return}
+ if(G.k==='line'){if(pick!=null){if(Math.abs(y-pick)<4)return;drag=((y<pick)===(side()==='BUY'))?'tp':'sl';grab=Y(L[drag])-pick;pick=null}
+  if(!drag)return;const v=P(Math.min(Math.max(y+grab,0),cv.height));if(drag==='entry'){const d=v-G.s.entry;['slim','tp','sl'].forEach(k=>{if(G.s[k]!=null)L[k]=G.s[k]+d})}L[drag]=v;draw();panel();return}
+ if(G.k==='oline'){if(!od){const dx=x-G.x0,dy=y-G.y0;if(Math.hypot(dx,dy)<=6)return;if(Math.abs(dy)>Math.abs(dx)){od={o:G.ol.o,k:G.ol.k,v:G.ol.v};G.grab=Y(G.ol.v)-G.y0}else{G.k='pan';G.moved=true;G.hist=[[performance.now(),x,y]];G.lx=x;G.ly=y;return}}
+  od.v=R(P(Math.min(Math.max(y+G.grab,0),cv.height)));draw();return}
+ if(G.k==='cross'){cross={x:Math.min(x,PW()),y};draw();return}
+ const dx=x-G.lx,dy=y-G.ly;if(!G.moved&&Math.hypot(x-G.x0,y-G.y0)>6){G.moved=true;clearTimeout(G.lp)}G.lx=x;G.ly=y;if(!G.moved)return;
+ if(G.k==='axis'){range();scaleY(Math.exp(dy*.004))}else{range();panX(dx);panY(dy);G.hist.push([performance.now(),x,y]);if(G.hist.length>6)G.hist.shift()}
+ range();draw()};
+cv.onpointerup=cv.onpointercancel=e=>{ptrs.delete(e.pointerId);if(!G)return;const g0=G;
+ if(g0.k==='pinch'){if(ptrs.size===0)G=null;return}
+ G=null;clearTimeout(g0.lp);
+ if(g0.k==='cbtn'){if(!g0.moved)openClose(g0.p);return}
+ if(g0.k==='line'){pick=null;if(drag){Object.keys(L).forEach(k=>{if(L[k]!=null)L[k]=R(L[k])});drag=null}render();return}
+ if(g0.k==='oline'){if(od){const d=od;od=null;propose(d.o,d.k,d.v)}else if(g0.tap&&Math.hypot(e.offsetX-g0.x0,e.offsetY-g0.y0)<=6){lastTap=0;openClose(g0.tap)}else{const t=performance.now();if(t-lastTap<300){vp.manual=false;vp.scroll=0;lastTap=0;render()}else lastTap=t}return}
+ if(g0.k==='cross'){cross=null;draw();return}
+ if(!g0.moved&&g0.k==='pan'){const hp=hitPosLine(g0.x0,g0.y0);if(hp){lastTap=0;openClose(hp);return}}
+ if(!g0.moved){const t=performance.now();if(t-lastTap<300){vp.manual=false;if(g0.k==='pan')vp.scroll=0;lastTap=0;render()}else lastTap=t;return}
+ if(g0.k==='pan'){const h=g0.hist,a=h[0],b=h[h.length-1],dt=Math.max(b[0]-a[0],1);let vx=(b[1]-a[1])/dt*16,vy=(b[2]-a[2])/dt*16;
+  if(Math.abs(vx)>4||(vp.manual&&Math.abs(vy)>4)){const id=++flingId;(function step(){if(id!==flingId)return;range();panX(vx);panY(vy);vx*=.94;vy*=.94;range();draw();if(Math.abs(vx)>.3||Math.abs(vy)>.3)requestAnimationFrame(step)})()}}};
+cv.onwheel=e=>{e.preventDefault();range();if(e.offsetX>=PW())scaleY(Math.exp(e.deltaY*.002));else if(e.ctrlKey||!e.shiftKey)zoomAt(Math.exp(-e.deltaY*.002),e.offsetX);else panX(e.deltaY);range();draw()};
+$('jump').onclick=()=>{flingId++;vp.scroll=0;render()};
+let frozen=false;setInterval(()=>{if(frozen)return;bid=R(bid+(Math.random()-.5)*.00012);cs[cs.length-1].c=bid;cs[cs.length-1].h=Math.max(cs[cs.length-1].h,bid);cs[cs.length-1].l=Math.min(cs[cs.length-1].l,bid);match();if(Math.random()<.03){cs.push({o:bid,c:bid,h:bid,l:bid});if(vp.scroll>.5)vp.scroll+=1}if(!drag&&!G)render()},400);
+window.onresize=render;
+const v=new URLSearchParams(location.search).get('view');
+if(v){frozen=true;positions.push({id:58955985012,side:'BUY',vol:0.01,open:R(bid-.0009),tp:R(bid+.0021),sl:R(bid-.0024)})}
+if(v==='v8'||v==='v8dlg'||v==='v8set'){open=false;positions.length=0;positions.push({id:58956001,side:'BUY',vol:0.1,open:R(bid-.0007),tp:null,sl:null},{id:58956003,side:'BUY',vol:0.05,open:R(bid-.0015),tp:null,sl:null});if(v==='v8set')tab=4;render();if(v==='v8dlg')batchAsk('BUY')}else if(v==='v7'||v==='v7dlg'){open=false;positions.length=0;positions.push({id:58956001,side:'BUY',vol:0.1,open:R(bid-.0007),tp:null,sl:null},{id:58956002,side:'SELL',vol:0.05,open:R(bid+.0012),tp:null,sl:null});render();if(v==='v7dlg')openClose(positions[0])}else if(v==='v6on'){open=true;sheet=true;selTab('PREP');expanded=true;L.tp=R(bid+.0016);L.sl=R(bid-.0011);lots='0.10';positions.push({id:58956001,side:'BUY',vol:0.1,open:R(bid-.0005),tp:null,sl:null})}else if(v==='v6off'){open=true;sheet=true;selTab('PREP');expanded=true;tpOn=false;slOn=false;lots='0.10'}else if(v==='v6strip'){open=true;sheet=false}else if(v==='panel'){open=true;sheet=true;selTab('BUY_LIMIT');expanded=true;slOn=true;L.sl=defLvl(false)}else if(v==='prep'){open=true;sheet=true;selTab('PREP');prepSide='BUY';L.tp=R(bid+.0016);L.sl=R(bid-.0011)}else if(v==='trade'){tab=2;orders.push({id:58956002,type:'买入限价',vol:0.01,price:R(ask()-.002)})}
+if(v&&v.startsWith('v9')){open=false;positions.length=0;positions.push({id:58956001,side:'BUY',vol:0.1,open:R(bid-.0006),tp:null,sl:null});
+ const bl={id:58956010,k:'BUY_LIMIT',type:'买入限价',vol:0.1,price:R(ask()-.0018),slim:null,tp:R(ask()+.0012),sl:R(ask()-.0036)},ss={id:58956011,k:'SELL_STOP',type:'卖出止损',vol:0.05,price:R(bid-.0042),slim:null,tp:null,sl:null};orders.push(bl,ss);
+ if(v==='v9drag'){od={o:bl,k:'entry',v:R(bl.price-.0007)}}else if(v==='v9invalid'){od={o:bl,k:'entry',v:R(ask()+.0006)}}else if(v==='v9confirm'){prop={o:bl,k:'entry',old:bl.price,v:R(bl.price-.0007)}}
+ vp.manual=true;vp.hi=R(bid+.0017);vp.lo=R(bid-.0070);}
+if(v&&v.startsWith('v11')){open=false;positions.length=0;positions.push({id:58956001,side:'BUY',vol:0.1,open:R(bid-.0006),tp:null,sl:null});
+ if(v==='v11drag'){const bl={id:58956010,k:'BUY_LIMIT',type:'买入限价',vol:0.1,price:R(bid-.0008),slim:null,tp:null,sl:null};orders.push(bl);od={o:bl,k:'entry',v:R(bl.price-.0010)};vp.manual=true;vp.hi=R(bid+.0017);vp.lo=R(bid-.0040)}
+ else{open=true;sheet=true;selTab('BUY_LIMIT');lots='0.25';expanded=v==='v11open'}}
+if(v==='pan'){render();range();panX(900);range();scaleY(1.6);panY(-60);for(let i=0;i<3;i++){range();panX(300)}}
+else if(v==='zoom'){render();zoomAt(3,PW()-60)}
+else if(v==='cross'){render();zoomAt(1.6,PW()-40);cross={x:PW()-140,y:0};range();cross.y=Y(cs[Math.round(IDX(PW()-140))].c)}
+else if(v==='prep2'){open=true;sheet=true;selTab('PREP');L.tp=R(bid+.0016);L.sl=R(bid-.0011);render();range();panX(250)}
+render();
+</script></html>

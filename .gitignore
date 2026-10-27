@@ -1,0 +1,32 @@
+# Gradle / Android
+.gradle/
+.kotlin/
+build/
+app/build/
+local.properties
+*.apk
+*.aab
+*.idsig
+*.jks
+*.keystore
+captures/
+.idea/
+*.iml
+
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Python / PyInstaller
+__pycache__/
+*.pyc
+.venv/
+venv/
+server/dist/
+server/build/
+
+# Archives / OS
+*.zip
+.DS_Store
+Thumbs.db
