@@ -8,7 +8,7 @@ android {
     compileSdk = 34
     defaultConfig {
         applicationId = "com.morris.mttpsl"
-        minSdk = 26; targetSdk = 34; versionCode = 15; versionName = "0.15"
+        minSdk = 26; targetSdk = 34; versionCode = 16; versionName = "0.16"
     }
     buildTypes {
         // 与 v6 相同：release 用 debug 证书签名，才能直接覆盖安装

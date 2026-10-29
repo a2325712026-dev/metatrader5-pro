@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.16 — 2026-10-29
+- App: new **About / Support** screen (Settings → 关于 / 支持项目): app version, project note, donation address in monospace with one-tap copy, supported chains (BSC / BEP20, Ethereum / ERC20, Base) and a button that opens the Telegram group. No popups, no nagging.
+- Server: bilingual startup banner with the Telegram group, donation address and chains; new public `/about` endpoint (no auth, no secrets); `/health` reports `version: 16`.
+- Tests: donation address / Telegram constants checked byte-for-byte (app and server).
+
 ## v0.15 — 2026-10-29
 - Partial close of open positions (server `/close` accepts a `volume` parameter).
 - Live USD / points labels while dragging SL/TP lines.

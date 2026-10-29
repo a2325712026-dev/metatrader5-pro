@@ -148,9 +148,37 @@ def filling_mode(info):
     return mt5.ORDER_FILLING_RETURN
 
 
+VERSION = 16
+TELEGRAM_URL = "https://t.me/metatrader5pro_chat_group"
+DONATION_ADDRESS = "0xB5f7e22fa69b5D88eeCc238A767b582d18CFF2bF"
+DONATION_CHAINS = ["BSC / BEP20", "Ethereum / ERC20", "Base"]
+NOTE_ZH = "MT5 加强版是我利用业余时间独立开发维护的开源项目，完全免费。服务器测试、新功能开发和持续更新都需要投入时间和成本。如果这个工具帮你省了时间或让交易更顺手，欢迎请我喝杯咖啡，你的支持是项目持续更新的动力。"
+NOTE_EN = "MT5 Pro is a free, open-source project I build and maintain in my spare time. Server testing, new features and ongoing updates take real time and cost. If it saves you time or makes your trading smoother, consider buying me a coffee. Your support keeps the project going."
+
+
+def about_info():
+    """公开信息（无鉴权、不含任何密钥）"""
+    return {"name": "MT5 加强版 / MT5 Pro", "version": VERSION, "telegram": TELEGRAM_URL,
+            "donation": {"address": DONATION_ADDRESS, "chains": DONATION_CHAINS},
+            "note_zh": NOTE_ZH, "note_en": NOTE_EN}
+
+
+def print_support_banner():
+    print("-" * 56, flush=True)
+    print(f" 电报交流群 / Telegram: {TELEGRAM_URL}", flush=True)
+    print(f" 打赏地址 / Donate: {DONATION_ADDRESS}", flush=True)
+    print(f" 支持的链 / Chains: {', '.join(DONATION_CHAINS)}", flush=True)
+    print(" 免费开源，欢迎请我喝杯咖啡 / Free & open source - buy me a coffee if it helps", flush=True)
+
+
 @app.get("/health")
 def health():
-    return {"ok": True, "version": 15, "partial_close": True}
+    return {"ok": True, "version": VERSION, "partial_close": True, "about": "/about"}
+
+
+@app.get("/about")
+def about():
+    return about_info()
 
 
 @app.get("/account", dependencies=[Depends(auth)])
@@ -531,7 +559,7 @@ def cli():
     ssl_cert, ssl_key = resolve_tls()
     scheme = "https" if ssl_cert else "http"
     print("=" * 56, flush=True)
-    print(" MT5 Bridge 服务", flush=True)
+    print(f" MT5 Bridge 服务 v{VERSION}", flush=True)
     print(f" 配置文件: {ENV_PATH} {'(已找到)' if os.path.exists(ENV_PATH) else '(未找到！请把 .env.example 复制为 .env 并填写)'}", flush=True)
     print(f" 监听地址: {scheme}://{args.host}:{args.port}   (健康检查 /health)", flush=True)
     if ssl_cert:
@@ -553,6 +581,7 @@ def cli():
         print(" 注意：已对外监听但未启用 HTTPS（API Key 明文传输）。建议：运行 mt5-bridge.exe --setup <服务器IP> 一键启用 HTTPS 并生成手机连接码", flush=True)
     if args.host not in ("127.0.0.1", "localhost"):
         print(" 注意：已对外监听，请务必设置强 API Key", flush=True)
+    print_support_banner()
     print(" 按 Ctrl+C 停止", flush=True)
     print("=" * 56, flush=True)
     if not API_KEY:

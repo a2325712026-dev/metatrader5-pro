@@ -19,7 +19,9 @@ The app does not talk to MetaTrader directly. It talks to a small **Python FastA
 
 > ⚠️ Trading is risky. Read the [Security](#security) and [Risk disclaimer](#risk-disclaimer) sections before connecting a real account. Use a **demo account** first.
 
-## What's new (v0.13 – v0.15)
+## What's new (v0.13 – v0.16)
+
+- **v0.16**: **About / Support** screen in Settings (version, donation address with one-tap copy, supported chains, Telegram group button); the server prints a bilingual banner on startup and serves the same info at the public `/about` endpoint; `/health` reports `version: 16`.
 
 - **v0.15**: **partial close** (choose the volume to close; the server `/close` accepts a `volume` parameter); **live USD / points labels** on the SL/TP lines while dragging; **MT5-style buttons** – inactive SL/TP buttons are shown gray; one **shared pinned HTTP client with retries** for better connection stability; server `/health` reports its `version`, symbol info includes **tick value / tick size**, and `--setup` installs a **watchdog scheduled task** that restarts the bridge.
 - **v0.14**: **trust-on-first-use certificate pinning** – setup needs only the server address and the API key; the connection code is accepted **with or without the `MT5PRO1:` prefix**; input fields **never auto-clear**; TP/SL lines of open positions are **draggable** with a confirm bar.
@@ -205,7 +207,7 @@ On Windows use `gradlew.bat`. The release build type is signed with the **debug*
 
 ### Install a prebuilt APK
 
-Download `mt-tpsl-v15.apk` (version 0.15) from the GitHub **Releases** page of this repository and install it on your phone. The APK is signed with a debug key, not a Play Store key; you must allow **installing from unknown sources** for your browser / file manager. You may need to uninstall an older build that was signed with a different key first. As with any APK from the internet, only install it if you trust the source – or build it yourself.
+Download `mt-tpsl-v16.apk` (version 0.16) from the GitHub **Releases** page of this repository and install it on your phone. The APK is signed with a debug key, not a Play Store key; you must allow **installing from unknown sources** for your browser / file manager. You may need to uninstall an older build that was signed with a different key first. As with any APK from the internet, only install it if you trust the source – or build it yourself.
 
 ### Configure the app
 

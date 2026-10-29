@@ -42,6 +42,8 @@ fun SettingsScreen(
     /** 测试连接首次记录了证书：(测试用的地址, 指纹)；由外层决定是否写入已保存配置 */
     onLearned: (String, String) -> Unit = { _, _ -> },
 ) {
+    var showAbout by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
+    if (showAbout) { AboutScreen(onBack = { showAbout = false }); return }
     val c = draft.c
     val scope = rememberCoroutineScope()
     val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
@@ -51,7 +53,10 @@ fun SettingsScreen(
         Modifier.fillMaxSize().background(Color(0xFF111418)).verticalScroll(rememberScrollState()).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        Text("设置", color = Color.White, style = MaterialTheme.typography.titleLarge)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("设置", color = Color.White, style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
+            TextButton(onClick = { showAbout = true }) { Text("关于 / 支持项目") }
+        }
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("平台: ", color = Color.White)
             Platform.entries.forEach { p ->
