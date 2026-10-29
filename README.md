@@ -2,7 +2,10 @@
 
 **English** | [简体中文](README.zh-CN.md)
 
-**💬 Telegram group:** https://t.me/metatrader5pro_chat_group  
+**💬 Telegram group:** https://t.me/metatrader5pro_chat_group
+
+MT5 Pro is a free, open-source project I build and maintain in my spare time. Server testing, new features and ongoing updates take real time and cost. If it saves you time or makes your trading smoother, consider buying me a coffee. Your support keeps the project going.
+
 **☕ Donate (BSC / BEP20, Ethereum / ERC20, Base):** `0xB5f7e22fa69b5D88eeCc238A767b582d18CFF2bF`
 
 An Android app (Kotlin + Jetpack Compose) that replicates the look and feel of the MetaTrader 5 mobile app, plus two features the official mobile app does not offer:
