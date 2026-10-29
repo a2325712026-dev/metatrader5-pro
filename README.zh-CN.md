@@ -2,6 +2,9 @@
 
 [English](README.md) | **简体中文**
 
+**💬 电报交流群：** https://t.me/metatrader5pro_chat_group  
+**☕ 打赏地址（BSC / BEP20）：** `0xB5f7e22fa69b5D88eeCc238A767b582d18CFF2bF`
+
 一个用 Kotlin + Jetpack Compose 编写的 Android 应用，复刻 MetaTrader 5 手机端的界面与操作，并加入官方手机端没有的两个功能：
 
 - **可拖动的 TP/SL 线**：在图表上上下拖动止盈 / 止损线（适用于已有持仓、已有挂单和新订单），松手后应用修改。
@@ -12,10 +15,6 @@ App 并不直接连接 MetaTrader，而是连接一个运行在 Windows 上、�
 > **说明：**App 界面文字和服务端控制台提示目前为中文。App 内置**演示模式**（模拟数据，无需服务器和账户），可直接体验。
 
 > ⚠️ 交易有风险。连接真实账户前请阅读下面的[安全](#安全)与[风险声明](#风险声明)，并**先使用模拟账户**。
-
-## 交流群
-
-欢迎加入电报交流群：https://t.me/metatrader5pro_chat_group
 
 ## 更新内容（v0.13 – v0.15）
 

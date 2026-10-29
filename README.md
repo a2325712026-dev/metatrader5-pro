@@ -2,6 +2,9 @@
 
 **English** | [简体中文](README.zh-CN.md)
 
+**💬 Telegram group:** https://t.me/metatrader5pro_chat_group  
+**☕ Donate (BSC / BEP20):** `0xB5f7e22fa69b5D88eeCc238A767b582d18CFF2bF`
+
 An Android app (Kotlin + Jetpack Compose) that replicates the look and feel of the MetaTrader 5 mobile app, plus two features the official mobile app does not offer:
 
 - **Draggable TP/SL lines** – on the chart you can drag take-profit / stop-loss lines up and down (for open positions, for pending orders and for new orders) and release to apply the change.
@@ -12,10 +15,6 @@ The app does not talk to MetaTrader directly. It talks to a small **Python FastA
 > **Note:** the UI strings of the app and the server console messages are currently in Chinese. A built-in demo mode (simulated data, no server needed) lets you try the app without any account.
 
 > ⚠️ Trading is risky. Read the [Security](#security) and [Risk disclaimer](#risk-disclaimer) sections before connecting a real account. Use a **demo account** first.
-
-## Community
-
-Join our Telegram group: https://t.me/metatrader5pro_chat_group
 
 ## What's new (v0.13 – v0.15)
 
