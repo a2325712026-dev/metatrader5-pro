@@ -55,10 +55,11 @@ class CrashRobustnessTest {
     }
 
     // ---------- 解析：坏数据只丢该项 ----------
-    private fun server(vararg bodies: String): MockWebServer = MockWebServer().apply {
-        bodies.forEach { enqueue(MockResponse().setBody(it)) }; start()
+    private val fps = java.util.IdentityHashMap<MockWebServer, String>() // HTTPS 测试服务器 → 证书指纹
+    private fun server(vararg bodies: String): MockWebServer = TestHttps.start().let { (s, f) ->
+        fps[s] = f; bodies.forEach { s.enqueue(MockResponse().setBody(it)) }; s
     }
-    private fun api(s: MockWebServer) = Mt5BridgeTradingApi(s.url("/").toString(), "test-key-not-real")
+    private fun api(s: MockWebServer) = Mt5BridgeTradingApi(s.url("/").toString(), "test-key-not-real", fps[s] ?: "")
 
     @Test fun positionsWithMissingFieldsAreSkippedNotFatal() = runBlocking {
         val s = server("""[{"ticket":"1","symbol":"EURUSD","type":"BUY","volume":0.1,"price_open":1.1},
@@ -126,7 +127,7 @@ class CrashRobustnessTest {
 
     // ---------- WebSocket 重连 ----------
     @Test fun webSocketReconnectsAfterServerClosesAndSkipsBadMessages() {
-        val server = MockWebServer()
+        val (server, serverFp) = TestHttps.start(); fps[server] = serverFp
         server.enqueue(MockResponse().withWebSocketUpgrade(object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 webSocket.send("garbage")
@@ -139,7 +140,6 @@ class CrashRobustnessTest {
                 webSocket.send("""{"bid":1.2,"ask":1.2002,"time_msc":2}""")
             }
         }))
-        server.start()
         try {
             val got = runBlocking { withTimeout(15_000) { api(server).quotes("EURUSD").take(2).toList() } }
             assertEquals(listOf(1.1, 1.2), got.map { it.bid })

@@ -24,6 +24,10 @@ internal fun orderBody(symbol: String, side: Side, volume: Double, sl: Double?, 
     JSONObject().put("symbol", symbol).put("side", side.name).put("volume", volume)
         .put("sl", sl ?: 0.0).put("tp", tp ?: 0.0).put("comment", comment)
 
+/** 平仓请求体：volume 保留 8 位小数（避免 0.30000000000000004） */
+internal fun closeBody(volume: Double): JSONObject =
+    JSONObject().put("volume", java.math.BigDecimal(volume).setScale(8, java.math.RoundingMode.HALF_UP).stripTrailingZeros().toDouble())
+
 /** 一条 K 线是否可用：时间 > 0，价格有限且 > 0，high ≥ low（坏数据直接丢弃，避免图表出现 NaN / 除零） */
 internal fun validCandle(c: Candle) =
     c.time > 0 && listOf(c.open, c.high, c.low, c.close).all { it.isFinite() && it > 0.0 } && c.high >= c.low
@@ -46,10 +50,8 @@ internal inline fun <T> JSONArray.mapTolerant(f: (JSONObject) -> T?): List<T> =
     (0 until length()).mapNotNull { i -> try { f(getJSONObject(i)) } catch (_: Exception) { null } }
 
 /** 桥接服务用的 OkHttp 客户端（含 TLS 配置）。指纹格式错误时抛 [InvalidFingerprintException]。 */
-fun bridgeHttpClient(serverUrl: String, certFingerprint: String): OkHttpClient = OkHttpClient.Builder()
-    .connectTimeout(10, TimeUnit.SECONDS).readTimeout(20, TimeUnit.SECONDS)
-    .pingInterval(20, TimeUnit.SECONDS)
-    .applyServerTls(normalizeServerUrl(serverUrl), certFingerprint).build()
+/** v15：返回按“地址 + 指纹”共享的客户端（见 [BridgeHttp]），所有请求与 WebSocket 共用 */
+fun bridgeHttpClient(serverUrl: String, certFingerprint: String): OkHttpClient = BridgeHttp.client(serverUrl, certFingerprint)
 
 class Mt5BridgeTradingApi(
     serverUrl: String,
@@ -58,7 +60,7 @@ class Mt5BridgeTradingApi(
     certFingerprint: String = "",
     private val http: OkHttpClient = bridgeHttpClient(serverUrl, certFingerprint),
 ) : TradingApi {
-    private val base = normalizeServerUrl(serverUrl)
+    private val base = normalizeServerUrl(serverUrl).also { requireHttps(it) } // 即使注入了自定义客户端，也绝不接受明文地址
     private val json = "application/json".toMediaType()
 
     private fun req(path: String) = Request.Builder().url("$base$path").header("X-API-Key", apiKey)
@@ -94,7 +96,10 @@ class Mt5BridgeTradingApi(
         val digits = o.getInt("digits"); val point = o.getDouble("point")
         // point = 0 / digits 离谱 会导致后面处处除零 / BigDecimal 崩溃 → 当作服务器数据错误上报
         if (!point.isFinite() || point <= 0.0 || digits !in 0..10) throw IllegalStateException("服务器返回的品种参数无效: digits=$digits point=$point")
-        return SymbolSpec(symbol, digits, point, o.optInt("trade_stops_level", 0))
+        fun pos(k: String, d: Double) = o.optDouble(k, d).takeIf { it.isFinite() && it > 0 } ?: d
+        return SymbolSpec(symbol, digits, point, o.optInt("trade_stops_level", 0),
+            volumeMin = pos("volume_min", 0.01), volumeStep = pos("volume_step", 0.01), volumeMax = pos("volume_max", 100.0),
+            contractSize = pos("trade_contract_size", 0.0), tickValue = pos("trade_tick_value", 0.0), tickSize = pos("trade_tick_size", 0.0))
     }
 
     override suspend fun candles(symbol: String, timeframe: String, limit: Int, offset: Int): List<Candle> {
@@ -197,6 +202,13 @@ class Mt5BridgeTradingApi(
     }
 
     override suspend fun closePosition(positionId: String) = trade { post("/positions/$positionId/close", JSONObject()) }
+
+    /** v15 服务器：POST /positions/{ticket}/close {"volume": v}（旧服务器会忽略 volume 并全部平仓 → 先查 /health 确认支持） */
+    override suspend fun closePosition(positionId: String, volume: Double) = trade {
+        val h = try { JSONObject(get("/health")) } catch (e: Exception) { JSONObject() }
+        if (!h.optBoolean("partial_close")) throw IllegalStateException("服务器版本过旧，不支持部分平仓（请升级到 v15 服务器）")
+        post("/positions/$positionId/close", closeBody(volume))
+    }
 
     override suspend fun placePending(
         symbol: String, type: PendingType, volume: Double, price: Double, stopLimit: Double?,

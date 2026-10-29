@@ -45,6 +45,29 @@ object ProfitCalc {
         .filter { it > 0 }
         .takeIf { it.isNotEmpty() }?.average()
 
+    /** 由品种参数（MT5 trade_tick_value / trade_tick_size）得到每价格单位每手的账户货币值；参数缺失返回 null */
+    fun unitValueFromSpec(tickValue: Double, tickSize: Double): Double? =
+        if (tickValue.isFinite() && tickSize.isFinite() && tickValue > 0 && tickSize > 0) tickValue / tickSize else null
+
+    /** 由合约大小推出（报价货币为账户货币时）：contractSize × quoteToUsd */
+    fun unitValueFromContract(symbol: String, contractSize: Double, price: Double, quotes: Map<String, Double> = emptyMap()): Double? =
+        if (contractSize > 0) quoteToUsd(symbol, price, quotes)?.let { contractSize * it } else null
+
+    /** 有符号点数：(平仓价 − 开仓价) × 方向 / point */
+    fun points(side: Side, open: Double, close: Double, point: Double): Long {
+        if (point <= 0 || !point.isFinite()) return 0
+        val diff = if (side == Side.BUY) close - open else open - close
+        return Math.round(diff / point)
+    }
+
+    /** MT5 拖线标签的数值部分：“+726.30 USD, 7263 points”（点数为与开仓价的距离，不带符号；盈亏带符号） */
+    fun pnlPoints(profit: Double?, points: Long, currency: String = "USD"): String =
+        "${formatSigned(profit, currency)}, ${kotlin.math.abs(points)} points"
+
+    /** MT5 拖线标签：“TP, +726.30 USD, 7263 points” / “SL, -12.00 USD, -120 points” */
+    fun lineLabel(name: String, profit: Double?, points: Long, currency: String = "USD"): String =
+        "$name, ${pnlPoints(profit, points, currency)}"
+
     /** MT5 风格：-1.23 USD */
     fun format(v: Double?, currency: String = "USD"): String =
         if (v == null) "— $currency" else String.format(Locale.US, "%.2f %s", v, currency)

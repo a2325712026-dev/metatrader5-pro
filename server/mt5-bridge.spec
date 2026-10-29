@@ -4,7 +4,7 @@ from PyInstaller.utils.hooks import collect_all
 
 datas = []
 binaries = []
-hiddenimports = ['numpy', 'dotenv', 'h11', 'anyio._backends._asyncio', 'certgen']  # certgen: --make-cert（同目录模块）
+hiddenimports = ['numpy', 'dotenv', 'h11', 'anyio._backends._asyncio', 'certgen', 'miniqr']  # certgen / miniqr: --setup / --make-cert（同目录模块；miniqr = 控制台二维码）
 hiddenimports += collect_submodules('uvicorn')
 hiddenimports += collect_submodules('websockets')
 hiddenimports += collect_submodules('fastapi')

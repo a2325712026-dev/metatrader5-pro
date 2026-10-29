@@ -57,6 +57,9 @@ class ConfigRepository(private val ds: DataStore<Preferences>) {
         p[K.certFp] = com.morris.mttpsl.api.formatFingerprint(c.certFingerprint)
     }
 
+    /** 只更新证书指纹（TOFU 自动记录 / “重置证书记录”）：立即持久化，不动其他设置 */
+    suspend fun setCertFingerprint(fp: String) { ds.edit { it[K.certFp] = com.morris.mttpsl.api.formatFingerprint(fp) } }
+
     /** 设置页开关：立即持久化，不必等到点“保存” */
     suspend fun setConfirmBatchClose(on: Boolean) { ds.edit { it[K.confirmBatch] = on } }
 }

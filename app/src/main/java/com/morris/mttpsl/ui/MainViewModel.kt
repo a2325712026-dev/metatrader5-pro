@@ -168,6 +168,9 @@ class MainViewModel : ViewModel() {
     /** 图上拖动挂单线松手后，等待“确认修改 / 取消”的提案（null = 没有） */
     private val _orderMove = MutableStateFlow<OrderMoveProposal?>(null); val orderMove: StateFlow<OrderMoveProposal?> = _orderMove
     private val _orderMoveBusy = MutableStateFlow(false); val orderMoveBusy: StateFlow<Boolean> = _orderMoveBusy
+    // 图上拖动【已开仓持仓】的 TP/SL 线：提案 → 确认 → modifyPosition
+    private val _positionMove = MutableStateFlow<PositionMoveProposal?>(null); val positionMove: StateFlow<PositionMoveProposal?> = _positionMove
+    private val _positionMoveBusy = MutableStateFlow(false); val positionMoveBusy: StateFlow<Boolean> = _positionMoveBusy
     /**
      * 所有协程都经由这里启动：兜底的 CoroutineExceptionHandler 会把意料之外的异常（含非 Exception 的 Error）
      * 记入崩溃日志并以提示条显示，而不是让整个 App 闪退。CancellationException 照常传播。
@@ -200,15 +203,16 @@ class MainViewModel : ViewModel() {
         if (key == apiKey) return
         apiKey = key
         api = apiOverride ?: if (live) try { Mt5BridgeTradingApi(serverUrl, apiKeyValue, certFingerprint) } catch (e: Exception) {
-            com.morris.mttpsl.CrashLog.record(e); toast(if (e is InvalidFingerprintException) "❌ HTTPS 证书指纹格式不对，已回到演示模式（请在设置里检查指纹）" else "❌ 服务器地址无效，已回到演示模式：${e.message?.take(80)}"); DemoTradingApi.shared
+            com.morris.mttpsl.CrashLog.record(e); toast(if (e is HttpsRequiredException) "❌ $HTTPS_REQUIRED_MESSAGE（不能用 http / ws），已回到演示模式。请在设置里改成 https:// 地址" else if (e is InvalidFingerprintException) "❌ HTTPS 证书指纹格式不对，已回到演示模式（请在设置里检查指纹）" else "❌ 服务器地址无效，已回到演示模式：${e.message?.take(80)}"); DemoTradingApi.shared
         } else DemoTradingApi.shared
         jobs.forEach { it.cancel() }; jobs.clear()
         _trade.value = TradeState(); _quotes.value = emptyList(); lastError = null; _closeId.value = null; _closeBusy.value = false
         _batchRequest.value = null; _orderMove.value = null; _orderMoveBusy.value = false
-        issues.clear(); _connIssue.value = null
+        issues.clear(); _connIssue.value = null; gate.reset()
+        _positionMove.value = null; _positionMoveBusy.value = false
         jobs += launchSafe {
             while (isActive) {
-                try { _quotes.value = api.quoteList(watchlist); setIssue("quotes", null) } catch (e: CancellationException) { throw e } catch (e: Exception) { reportError(e, "quotes") }
+                try { _quotes.value = api.quoteList(watchlist); ok("quotes") } catch (e: CancellationException) { throw e } catch (e: Exception) { reportError(e, "quotes") }
                 delay(1000)
             }
         }
@@ -219,7 +223,12 @@ class MainViewModel : ViewModel() {
         openChart(symbol, switchTab = false)
     }
 
+    /** 暂时性错误（超时 / 连接被拒）连续 3 次才弹横幅 / 提示，避免网络抖动时刷屏 */
+    private val gate = com.morris.mttpsl.api.TransientErrorGate()
+    private fun ok(src: String) { gate.ok(src); setIssue(src, null) }
+
     private fun reportError(e: Exception, src: String = "other") {
+        if (!gate.fail(src, com.morris.mttpsl.api.isTransientNetworkError(e))) return
         val issue = classifyError(e, liveArgs?.key)
         setIssue(src, issue)
         val m = "连接失败：${issue.title}（可在设置里点“测试连接”，或切回演示模式）"
@@ -231,15 +240,19 @@ class MainViewModel : ViewModel() {
         val a = liveArgs ?: return
         lastError = null
         apiKey = null
-        configure(true, a.url, a.key, a.symbol)
+        // v14 bug：这里没有传证书指纹 → 重建的客户端退回系统信任库，自签名证书报 “Trust anchor for certification path not found”
+        configure(true, a.url, a.key, a.symbol, certFingerprint = a.certFingerprint)
     }
 
     /** 账户、持仓、挂单分别获取：一个接口失败不再导致整个交易页为空 */
     suspend fun refreshTrade() {
         val errors = mutableListOf<String>()
         var firstIssue: ConnIssue? = null
+        var anyHard = false; var anyFail = false
         suspend fun <T> safe(name: String, block: suspend () -> T): T? = try { block() }
             catch (e: CancellationException) { throw e } catch (e: Exception) {
+                anyFail = true
+                if (!com.morris.mttpsl.api.isTransientNetworkError(e)) anyHard = true
                 val iss = classifyError(e, liveArgs?.key)
                 if (firstIssue == null) firstIssue = iss
                 errors += "$name: ${iss.title}（${iss.raw.lineSequence().first().take(160)}）"; null
@@ -247,13 +260,17 @@ class MainViewModel : ViewModel() {
         val a = safe("账户") { api.account() }
         val p = safe("持仓") { api.positions() }
         val o = safe("挂单") { api.orders() }
-        setIssue("trade", firstIssue)
+        val show = if (!anyFail) { gate.ok("trade"); false } else gate.fail("trade", !anyHard)
+        if (!anyFail) setIssue("trade", null) else if (show) setIssue("trade", firstIssue)
         _trade.update {
             TradeState(a ?: it.account, p ?: it.positions, o ?: it.orders, loaded = it.loaded || p != null,
-                error = errors.takeIf { e -> e.isNotEmpty() }?.joinToString("\n"))
+                // 暂时性错误未达阈值时不显示错误（保留上一次的数据）
+                error = errors.takeIf { e -> e.isNotEmpty() && show }?.joinToString("\n"))
         }
         // 待确认的改价所针对的挂单已不存在（成交 / 撤销）→ 丢弃提案
         _orderMove.value?.let { m -> if (o != null && !_orderMoveBusy.value && o.none { it.ticket == m.ticket }) _orderMove.value = null }
+        // 待确认的持仓 TP/SL 改价所针对的持仓已不存在（平仓 / 触发）→ 丢弃提案
+        _positionMove.value?.let { m -> if (p != null && !_positionMoveBusy.value && p.none { it.id == m.id }) _positionMove.value = null }
     }
 
     fun selectTab(t: Tab) {
@@ -271,6 +288,7 @@ class MainViewModel : ViewModel() {
         olderJob?.cancel(); noMoreHistory = false
         val same = symbol == _chart.value.symbol
         if (!same && !_orderMoveBusy.value) _orderMove.value = null
+        if (!same && !_positionMoveBusy.value) _positionMove.value = null
         _chart.update {
             if (same) it.copy(timeframe = timeframe, candles = emptyList())
             else ChartState(symbol = symbol, timeframe = timeframe, lotsText = it.lotsText)
@@ -278,8 +296,18 @@ class MainViewModel : ViewModel() {
         if (switchTab) _tab.value = Tab.CHART
         chartJob = launchSafe {
             try {
-                val spec = api.symbolSpec(symbol)
-                _chart.update { it.copy(spec = spec, candles = api.candles(symbol, timeframe, 120)) }
+                // 首次加载失败（超时 / 连接被拒等）不再让图表永远空白：指数退避重试，成功后清除横幅
+                var wait = 1000L
+                while (true) {
+                    try {
+                        val spec = api.symbolSpec(symbol)
+                        val cs = api.candles(symbol, timeframe, 120)
+                        _chart.update { it.copy(spec = spec, candles = cs) }
+                        ok("chart"); break
+                    } catch (e: CancellationException) { throw e } catch (e: Exception) {
+                        reportError(e, "chart"); delay(wait); wait = com.morris.mttpsl.api.nextBackoff(wait)
+                    }
+                }
                 launch {
                     while (isActive) {
                         delay(3000)
@@ -549,24 +577,36 @@ class MainViewModel : ViewModel() {
 
     /**
      * 面板“平仓”按钮：调用现有 close 接口并立即刷新持仓（线随之消失）。
-     * volumeText 为面板的手数输入；服务端不支持部分平仓时恒为全部手数（见 [ClosePlan]）。
+     * volumeText 为面板的手数输入（v15 支持部分平仓）：按品种 volume_min / volume_step 校验，不合法时提示且不发送。
      */
     fun confirmClosePanel(volumeText: String? = null) {
         val id = _closeId.value ?: return
         val p = _trade.value.positions.firstOrNull { it.id == id } ?: run { _closeId.value = null; return }
         if (_closeBusy.value) return
-        val vol = ClosePlan.volumeToClose(p, volumeText)
+        val (vmin, vstep) = closeVolumeLimits(p)
+        val vol = if (volumeText == null) p.volume else {
+            val (v, err) = ClosePlan.validate(p, volumeText, vmin, vstep)
+            if (v == null) { toast("❌ ${err ?: "手数无效"}"); return }
+            v
+        }
+        val full = ClosePlan.isFull(p, vol)
         _closeBusy.value = true
         launchSafe {
-            val r = try { api.closePosition(p.id) } catch (e: CancellationException) { throw e } catch (e: Exception) { TradeResult.Error(e.message ?: "error") }
+            val r = try { if (full) api.closePosition(p.id) else api.closePosition(p.id, vol) } catch (e: CancellationException) { throw e } catch (e: Exception) { TradeResult.Error(e.message ?: "error") }
             _closeBusy.value = false
             if (r is TradeResult.Ok) {
                 _closeId.value = null
                 if (_chart.value.editPosition?.id == p.id) closePanel()
             }
-            report(r, "✅ 已平仓 #${p.id} ${p.symbol} ${PositionLines.lots(vol)} 手")
+            report(r, if (full) "✅ 已平仓 #${p.id} ${p.symbol} ${PositionLines.lots(vol)} 手"
+                else "✅ 已部分平仓 #${p.id} ${p.symbol} ${PositionLines.lots(vol)} / ${PositionLines.lots(p.volume)} 手")
+            if (r is TradeResult.Ok) refreshTrade()
         }
     }
+
+    /** 平仓手数限制（volume_min, volume_step）：持仓品种与当前图表品种相同时用服务器参数，否则用 0.01 / 0.01 */
+    fun closeVolumeLimits(p: com.morris.mttpsl.api.Position): Pair<Double, Double> =
+        _chart.value.spec?.takeIf { it.symbol == p.symbol }?.let { it.volumeMin to it.volumeStep } ?: (0.01 to 0.01)
 
     // ---------------- 一键平仓（当前品种的全部买入 / 卖出持仓） ----------------
     fun setConfirmBatchClose(on: Boolean) { _confirmBatch.value = on }
@@ -640,6 +680,7 @@ class MainViewModel : ViewModel() {
         if (!OrderLines.moved(old, np, sp)) { _orderMove.value = null; return }
         val err = OrderLines.validate(o, kind, np, q.bid, q.ask, sp)
         if (err != null) { _orderMove.value = null; toast("❌ $err"); return }
+        if (!_positionMoveBusy.value) _positionMove.value = null
         _orderMove.value = OrderMoveProposal(o, kind, old, np)
     }
 
@@ -667,6 +708,56 @@ class MainViewModel : ViewModel() {
                 report(r, "✅ 已修改挂单 #${p.ticket} ${OrderLines.kindName(p.kind, p.order)} ${OrderLines.fmt(p.oldPrice, sp2)} → ${OrderLines.fmt(p.newPrice, sp2)}")
             } finally {
                 _orderMove.value = null; _orderMoveBusy.value = false
+            }
+        }
+    }
+
+    // ---------------- 图上直接拖动持仓的 TP / SL 线 ----------------
+    /** 拖动中的实时校验（最新报价）；null = 合法。找不到持仓 / 报价时返回 null（不拦截）。 */
+    fun checkPositionMove(id: String, kind: Int, price: Double): String? {
+        val p = _trade.value.positions.firstOrNull { it.id == id } ?: return null
+        val q = _chart.value.quote ?: return null
+        val sp = _chart.value.spec ?: return null
+        return PositionLineMoves.validate(p, kind, OrderLines.snap(price, sp), q.bid, q.ask, sp)
+    }
+
+    /** 松手：价格没变 → 无事发生（线吸附回原位）；不合法 → 中文错误提示，不发请求；合法 → 进入“确认修改 / 取消”（确认前不调用服务器） */
+    fun proposePositionMove(id: String, kind: Int, rawPrice: Double) {
+        if (_positionMoveBusy.value) return
+        val p = _trade.value.positions.firstOrNull { it.id == id } ?: run { _positionMove.value = null; return }
+        val old = PositionLineMoves.priceOf(p, kind) ?: run { _positionMove.value = null; return }
+        val q = _chart.value.quote; val sp = _chart.value.spec
+        if (q == null || sp == null) { _positionMove.value = null; toast("❌ 等待报价…"); return }
+        val np = OrderLines.snap(rawPrice, sp)
+        if (!OrderLines.moved(old, np, sp)) { _positionMove.value = null; return }
+        val err = PositionLineMoves.validate(p, kind, np, q.bid, q.ask, sp)
+        if (err != null) { _positionMove.value = null; toast("❌ $err"); return }
+        if (!_orderMoveBusy.value) _orderMove.value = null // 同一时间只显示一个确认条
+        _positionMove.value = PositionMoveProposal(p, kind, old, np)
+    }
+
+    fun cancelPositionMove() { if (!_positionMoveBusy.value) _positionMove.value = null }
+
+    /** 确认修改：api.modifyPosition（服务端 POST /positions/{ticket}/modify），另一条 TP/SL 保持原值 */
+    fun confirmPositionMove() {
+        val m = _positionMove.value ?: return
+        if (_positionMoveBusy.value) return
+        val live = _trade.value.positions.firstOrNull { it.id == m.id }
+        if (live == null) { _positionMove.value = null; toast("❌ 持仓 #${m.id} 已不存在（可能已平仓或触发止盈止损）"); return }
+        val q = _chart.value.quote; val sp = _chart.value.spec
+        if (q != null && sp != null) PositionLineMoves.validate(live, m.kind, m.newPrice, q.bid, q.ask, sp)?.let {
+            _positionMove.value = null; toast("❌ $it"); return
+        }
+        val n = PositionLineMoves.withPrice(live, m.kind, m.newPrice)
+        _positionMoveBusy.value = true
+        launchSafe {
+            val r = try { api.modifyPosition(n.id, n.takeProfit, n.stopLoss) }
+                catch (e: CancellationException) { throw e } catch (e: Exception) { TradeResult.Error(e.message ?: "error") }
+            try {
+                val sp2 = _chart.value.spec
+                report(r, "✅ 已修改持仓 #${m.id} ${PositionLineMoves.kindName(m.kind)} ${OrderLines.fmt(m.oldPrice, sp2)} → ${OrderLines.fmt(m.newPrice, sp2)}")
+            } finally {
+                _positionMove.value = null; _positionMoveBusy.value = false
             }
         }
     }

@@ -55,8 +55,9 @@ class PositionLinesTest {
     }
 
     @Test fun serverHasNoPartialCloseSoAlwaysFullVolume() {
-        assertFalse(ClosePlan.PARTIAL_SUPPORTED)
-        assertEquals(0.1, ClosePlan.volumeToClose(pos, "0.03"), 1e-9)
+        // v15：服务器支持部分平仓；显式关闭时仍恒为全部手数
+        assertTrue(ClosePlan.PARTIAL_SUPPORTED)
+        assertEquals(0.1, ClosePlan.volumeToClose(pos, "0.03", partialSupported = false), 1e-9)
         assertEquals(0.1, ClosePlan.volumeToClose(pos), 1e-9)
     }
 
@@ -91,17 +92,38 @@ class ClosePanelViewModelTest {
         vm.openClosePanel("does-not-exist"); assertNull(vm.closeId.value)
         vm.openClosePanel(target.id)
         assertEquals(target.id, vm.closeId.value)
-        vm.confirmClosePanel("0.01") // 部分手数被忽略 → 全平
+        vm.confirmClosePanel("0.01") // v15：部分平仓 0.01 手，持仓剩 0.04 手
         assertTrue(vm.closeBusy.value)
         advanceTimeBy(500)
         assertFalse(vm.closeBusy.value)
         assertNull("panel closed", vm.closeId.value)
         val after = vm.trade.value.positions
-        assertTrue("line source removed", after.none { it.id == target.id })
-        assertEquals(1, after.size)
-        assertEquals("closed in history with full volume", target.volume,
+        assertEquals(2, after.size)
+        assertEquals("remainder stays open", 0.04, after.first { it.id == target.id }.volume, 1e-9)
+        assertEquals("closed in history with partial volume", 0.01,
             demo.history(1).first { it.entry == "OUT" && it.positionId == target.id }.volume, 1e-9)
-        assertEquals("✅ 已平仓 #${target.id} EURUSD 0.05 手", vm.message.value)
+        assertEquals("✅ 已部分平仓 #${target.id} EURUSD 0.01 / 0.05 手", vm.message.value)
+        // 再全部平掉剩余手数
+        vm.openClosePanel(target.id); vm.confirmClosePanel("0.04")
+        advanceTimeBy(500)
+        assertTrue("line source removed", vm.trade.value.positions.none { it.id == target.id })
+        assertEquals(1, vm.trade.value.positions.size)
+        assertEquals("✅ 已平仓 #${target.id} EURUSD 0.04 手", vm.message.value)
+        vm.viewModelScope.cancel()
+    }
+
+    @Test fun invalidPartialVolumeIsRejectedWithoutSending() = runTest(dispatcher) {
+        val demo = DemoTradingApi(autoTick = false)
+        demo.setBid("EURUSD", 1.10000)
+        demo.marketOrder("EURUSD", Side.BUY, 0.05, null, null)
+        val vm = MainViewModel()
+        vm.configure(false, "", "", "EURUSD", apiOverride = demo)
+        advanceTimeBy(1500)
+        val id = vm.trade.value.positions.single().id
+        vm.openClosePanel(id); vm.confirmClosePanel("0.015")
+        assertFalse(vm.closeBusy.value)
+        assertTrue(vm.message.value!!.startsWith("❌"))
+        assertEquals(0.05, demo.positions().single().volume, 1e-9)
         vm.viewModelScope.cancel()
     }
 

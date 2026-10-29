@@ -93,11 +93,17 @@ data class DragLine(val id: Int, val price: Double?, val visible: Boolean, val c
 
 /** 只读的线（已有持仓/挂单） */
 @Immutable
-data class StaticLine(val price: Double, val color: Color, val label: String, val positionId: String? = null)
+data class StaticLine(
+    val price: Double, val color: Color, val label: String, val positionId: String? = null,
+    /** 持仓的 TP/SL 线：posTicket = 持仓 id，kind = [LineId.TP]/[LineId.SL]（可上下拖动改价）；其他线为 null / -1 */
+    val posTicket: String? = null, val kind: Int = -1,
+)
 
 /** 图上直接拖动挂单线时的实时状态（只在拖动期间有值；绘制读取它 → 只重绘不重组） */
 @Stable
 class LiveOrder {
+    /** true = 正在拖动的是持仓的 TP/SL 线（ticket 是持仓 id） */
+    var isPosition by mutableStateOf(false)
     var ticket by mutableStateOf<String?>(null)
     var kind by mutableIntStateOf(-1)
     var price by mutableDoubleStateOf(Double.NaN)
@@ -145,7 +151,19 @@ fun TradingChart(
     orderCheck: ((String, Int, Double) -> String?)? = null,
     /** 挂单 TP/SL 的预计盈亏：(方向, 手数, 开仓价, 平仓价) → 文字（USD） */
     orderPnl: ((Side, Double, Double, Double) -> String?)? = null,
+    /** 松手后待确认的持仓 TP/SL 改价提案：对应的线停在新价，直到确认/取消 */
+    positionMove: PositionMoveProposal? = null,
+    /** 持仓 TP/SL 线松手回调（持仓 id, LineId.TP/SL, 新价）→ ViewModel 校验并进入确认步骤 */
+    onPositionLineMove: (String, Int, Double) -> Unit = { _, _, _ -> },
+    /** 拖动持仓 TP/SL 线时的实时校验：错误文字（线变红）或 null */
+    positionCheck: ((String, Int, Double) -> String?)? = null,
+    /** 拖动持仓 TP/SL 线时标签的数值（MT5：“+726.30 USD, 7263 points”）：参数 = 持仓 id、线价格 */
+    positionPnl: ((String, Double) -> String?)? = null,
 ) {
+    val posPnlState = rememberUpdatedState(positionPnl)
+    val posMoveState = rememberUpdatedState(positionMove)
+    val posMoveCb = rememberUpdatedState(onPositionLineMove)
+    val posCheckState = rememberUpdatedState(positionCheck)
     val ordersState = rememberUpdatedState(orders)
     val moveState = rememberUpdatedState(orderMove)
     val orderMoveCb = rememberUpdatedState(onOrderMove)
@@ -229,11 +247,17 @@ fun TradingChart(
                         if (l.id in 0..3 && l.visible && !v.isNaN()) editYs[l.id] = r.y(v, h)
                     }
                     var orderRefs: List<OrderLineRef> = emptyList()
-                    if (down.position.x < w && ordersState.value.isNotEmpty()) {
-                        orderRefs = ordersState.value.flatMap { o ->
+                    if (down.position.x < w) {
+                        // 挂单线 + 持仓的 TP/SL 线（都可上下拖动）；等待确认的提案按新价参与命中
+                        val pendingRefs = ordersState.value.flatMap { o ->
                             OrderLines.linesOf(moveState.value?.takeIf { it.ticket == o.ticket }
                                 ?.let { m -> OrderLines.withPrice(o, m.kind, m.newPrice) } ?: o)
                         }
+                        val posRefs = staticState.value.filter { it.posTicket != null && it.kind >= 0 }.map { st ->
+                            val pm = posMoveState.value?.takeIf { it.id == st.posTicket && it.kind == st.kind }
+                            OrderLineRef(st.posTicket!!, st.kind, pm?.newPrice ?: st.price, positionLine = true)
+                        }
+                        orderRefs = pendingRefs + posRefs
                     }
                     val orderYs = FloatArray(orderRefs.size) { r.y(orderRefs[it].price, h) }
                     val hit = ChartHit.resolve(down.position.x, down.position.y, w, h, editYs, orderYs, posYs, posWs, posHs,
@@ -334,7 +358,7 @@ fun TradingChart(
                     if (dragOrder) { // 拖动挂单线（开仓价 / 限价 / TP / SL）
                         val ref = orderRefs[orderCand]
                         val grab = r.y(ref.price, h) - down.position.y
-                        liveOrder.ticket = ref.ticket; liveOrder.kind = ref.kind; liveOrder.price = ref.price
+                        liveOrder.isPosition = ref.positionLine; liveOrder.ticket = ref.ticket; liveOrder.kind = ref.kind; liveOrder.price = ref.price
                         fun apply(yy: Float) {
                             liveOrder.price = OrderLines.snap(r.price(OrderLines.clampY(yy + grab, h), h), spec)
                         }
@@ -346,7 +370,7 @@ fun TradingChart(
                             apply(c.position.y); c.consume()
                         }
                         val tk = ref.ticket; val kd = ref.kind; val fin = liveOrder.price
-                        orderMoveCb.value(tk, kd, fin)
+                        if (ref.positionLine) posMoveCb.value(tk, kd, fin) else orderMoveCb.value(tk, kd, fin)
                         // 让 ViewModel 的提案先进入下一帧再清除实时状态，避免线闪回旧价；不合法/取消时随后吸附回原位
                         scope.launch { delay(40); if (liveOrder.ticket == tk) liveOrder.ticket = null }
                         return@awaitEachGesture
@@ -425,11 +449,28 @@ fun TradingChart(
             val w = size.width - AXIS_W
             fun y(p: Double) = r.y(p, h)
             staticLines.forEach { s ->
-                val yy = y(s.price)
-                drawLine(s.color.copy(alpha = 0.85f), Offset(0f, yy), Offset(w, yy), 1.5f, pathEffect = ShortDash)
-                val layout = tm.measure(s.label, style.copy(color = Color.White))
-                drawRect(s.color, Offset(4f, yy - layout.size.height - 4f), Size(layout.size.width + 12f, layout.size.height + 4f))
+                // 持仓 TP/SL 线：拖动中 / 等待确认时显示新价（加粗实线 + 价签），不合法变红
+                var price = s.price; var activeLine = false; var dragLive = false
+                if (s.posTicket != null) {
+                    val pm = posMoveState.value
+                    if (pm != null && pm.id == s.posTicket && pm.kind == s.kind) { price = pm.newPrice; activeLine = true }
+                    if (liveOrder.isPosition && liveOrder.ticket == s.posTicket && liveOrder.kind == s.kind && !liveOrder.price.isNaN()) { price = liveOrder.price; activeLine = true; dragLive = true }
+                }
+                val bad = dragLive && posCheckState.value?.invoke(s.posTicket!!, s.kind, price) != null
+                val lineColor = if (bad) OrderRed else s.color
+                val yy = y(price)
+                if (activeLine) drawLine(lineColor, Offset(0f, yy), Offset(w, yy), if (dragLive) 5f else 4f)
+                else drawLine(s.color.copy(alpha = 0.85f), Offset(0f, yy), Offset(w, yy), 1.5f, pathEffect = ShortDash)
+                // MT5：拖动 / 待确认时标签为 “TP, +726.30 USD, 7263 points”（价格显示在右侧价签）
+                val text = if (activeLine) {
+                    val nm = if (s.kind == LineId.TP) "TP" else "SL"
+                    val v = posPnlState.value?.invoke(s.posTicket!!, price)
+                    (if (v != null) "$nm, $v" else "$nm  " + "%.${d}f".format(price)) + if (bad) "  ✕ 价格无效" else ""
+                } else s.label
+                val layout = tm.measure(text, style.copy(color = Color.White))
+                drawRect(lineColor, Offset(4f, yy - layout.size.height - 4f), Size(layout.size.width + 12f, layout.size.height + 4f))
                 drawText(layout, topLeft = Offset(10f, yy - layout.size.height - 2f))
+                if (activeLine) priceTag(tm, style, yy.coerceIn(22f, h - 22f), "%.${d}f".format(price), lineColor, Color.Black)
                 if (s.positionId != null) { // MT5 风格：标签右侧 ✕ 平仓按钮
                     val lr = PositionLines.labelRect(layout.size.width.toFloat(), layout.size.height.toFloat(), yy)
                     val cb = PositionLines.closeButtonRect(lr)
@@ -467,11 +508,15 @@ fun TradingChart(
                 val active = dragging.intValue == l.id
                 drawLine(l.color, Offset(0f, yy), Offset(w, yy), if (active) 5f else 2.5f)
                 val pnlFn = pnlState.value
-                val distTxt = if ((l.id == LineId.TP || l.id == LineId.SL) && pnlFn != null)
-                    pnlFn(p, if (pending) ref?.takeIf { !it.isNaN() } else null)?.let { "  $it" } ?: ""
-                else if (ref == null || ref.isNaN()) "" else
-                    "  %d pts".format(Math.round(abs(p - ref) / spec.point))
-                drawText(tm, "${l.name} %.${d}f$distTxt".format(p), Offset(6f, yy - 36f), style.copy(color = l.color))
+                val tpsl = (l.id == LineId.TP || l.id == LineId.SL) && pnlFn != null
+                val lineText = if (tpsl) {
+                    // MT5：“TP, +726.30 USD, 7263 points”
+                    pnlFn!!(p, if (pending) ref?.takeIf { !it.isNaN() } else null)?.let { "${l.name}, $it" } ?: ("${l.name} %.${d}f".format(p))
+                } else if (ref == null || ref.isNaN()) "${l.name} %.${d}f".format(p) else
+                    "${l.name} %.${d}f".format(p) + "  %d points".format(Math.round(abs(p - ref) / spec.point))
+                val lay = tm.measure(lineText, style.copy(color = Color.White))
+                drawRect(l.color, Offset(4f, yy - lay.size.height - 4f), Size(lay.size.width + 12f, lay.size.height + 4f))
+                drawText(lay, topLeft = Offset(10f, yy - lay.size.height - 2f))
                 // 线在可视区外时，把价签钉在上/下边缘
                 priceTag(tm, style, yy.coerceIn(22f, h - 22f), "%.${d}f".format(p), l.color, Color.Black)
             }
@@ -515,7 +560,7 @@ private fun DrawScope.drawOrders(
     pnl: ((Side, Double, Double, Double) -> String?)?, check: ((String, Int, Double) -> String?)?,
 ) {
     val d = spec.digits
-    val liveTicket = live.ticket
+    val liveTicket = live.ticket.takeIf { !live.isPosition }
     for (o0 in orders) {
         var o = o0
         var activeKind = -1
@@ -546,11 +591,12 @@ private fun DrawScope.drawOrders(
                 when (ref.kind) {
                     LineId.ENTRY -> append("${o.type.label.lowercase()} ${o.volume}${if (o.type.isStopLimit) " 触发" else ""}")
                     LineId.STOP_LIMIT -> append("限价 ${o.volume}")
-                    LineId.TP -> append("tp")
-                    else -> append("sl")
+                    LineId.TP -> append("TP")
+                    else -> append("SL")
                 }
-                if (active) append("  $priceTxt")
-                if (usd != null) append("  $usd")
+                val tpsl = ref.kind == LineId.TP || ref.kind == LineId.SL
+                if (active && !(tpsl && usd != null)) append("  $priceTxt")
+                if (usd != null) append(", $usd")
                 if (invalid) append("  ✕ 价格无效")
             }
             val layout = tm.measure(text, style.copy(color = Color.White))

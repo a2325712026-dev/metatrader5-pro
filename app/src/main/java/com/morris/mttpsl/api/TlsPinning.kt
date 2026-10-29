@@ -1,5 +1,6 @@
 package com.morris.mttpsl.api
 
+import okhttp3.ConnectionSpec
 import okhttp3.OkHttpClient
 import java.io.IOException
 import java.security.MessageDigest
@@ -15,7 +16,7 @@ import javax.net.ssl.X509TrustManager
  *  - 地址是 https:// 且设置了指纹 → 只信任【叶子证书 SHA-256 与指纹完全一致】的服务器（不信任任何其他证书，包括系统 CA 签发的）；
  *    因为证书本身已被指纹唯一锁定，仅在这个模式下放宽主机名校验（自签名证书的 SAN 即使与地址不符也无所谓）。
  *  - 地址是 https:// 且没有指纹 → 完全使用系统信任库 + 标准主机名校验（Let's Encrypt 等正规证书）。
- *  - 地址是 http:// → 与以前一样，不涉及 TLS。
+ *  - 地址不是 https://（http / ws 明文）→ 直接抛 [HttpsRequiredException]，App 只允许 HTTPS（v0.13 起）。
  * 任何情况下都不会“关闭校验”。
  */
 
@@ -88,13 +89,25 @@ class PinnedTrustManager(expectedFingerprint: String) : X509TrustManager {
 /** 固定模式下的主机名校验：证书已被指纹锁定，所以不再比对主机名。只在固定模式使用。 */
 internal val PinnedHostnameVerifier = HostnameVerifier { _, _ -> true }
 
+/** 在 OkHttp 层面彻底禁止明文：连接规格去掉 CLEARTEXT；拦截任何非 https 请求；不跟随 https → http 重定向。 */
+fun OkHttpClient.Builder.httpsOnly(): OkHttpClient.Builder = this
+    .connectionSpecs(listOf(ConnectionSpec.MODERN_TLS, ConnectionSpec.COMPATIBLE_TLS))
+    .followSslRedirects(false)
+    .addInterceptor { chain ->
+        if (!chain.request().url.isHttps) throw HttpsRequiredException(chain.request().url.toString())
+        chain.proceed(chain.request())
+    }
+
 /**
- * 按地址 + 指纹配置 OkHttp 的 TLS：
- *  - 非 https 或 指纹为空（空白） → 不改动（http 明文 / 系统信任）
+ * 按地址 + 指纹配置 OkHttp：
+ *  - 非 https → 抛 [HttpsRequiredException]（绝不明文）
+ *  - https 且指纹为空（空白） → 系统信任 + 标准主机名校验
  *  - https 且有指纹 → 固定指纹；指纹格式错误抛 [InvalidFingerprintException]（不会悄悄退回系统信任或放行）
  */
 fun OkHttpClient.Builder.applyServerTls(serverUrl: String, fingerprint: String): OkHttpClient.Builder {
-    if (!isHttpsUrl(serverUrl) || fingerprint.isBlank()) return this
+    requireHttps(serverUrl)
+    httpsOnly()
+    if (fingerprint.isBlank()) return this
     val tm = PinnedTrustManager(fingerprint)
     val ctx = SSLContext.getInstance("TLS").apply { init(null, arrayOf(tm), SecureRandom()) }
     return sslSocketFactory(ctx.socketFactory, tm).hostnameVerifier(PinnedHostnameVerifier)

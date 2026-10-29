@@ -13,6 +13,18 @@ The app does not talk to MetaTrader directly. It talks to a small **Python FastA
 
 > ⚠️ Trading is risky. Read the [Security](#security) and [Risk disclaimer](#risk-disclaimer) sections before connecting a real account. Use a **demo account** first.
 
+## Community
+
+Join our Telegram group: https://t.me/metatrader5pro_chat_group
+
+## What's new (v0.13 – v0.15)
+
+- **v0.15**: **partial close** (choose the volume to close; the server `/close` accepts a `volume` parameter); **live USD / points labels** on the SL/TP lines while dragging; **MT5-style buttons** – inactive SL/TP buttons are shown gray; one **shared pinned HTTP client with retries** for better connection stability; server `/health` reports its `version`, symbol info includes **tick value / tick size**, and `--setup` installs a **watchdog scheduled task** that restarts the bridge.
+- **v0.14**: **trust-on-first-use certificate pinning** – setup needs only the server address and the API key; the connection code is accepted **with or without the `MT5PRO1:` prefix**; input fields **never auto-clear**; TP/SL lines of open positions are **draggable** with a confirm bar.
+- **v0.13**: **HTTPS only** – no cleartext connections; one-step `--setup` on the server.
+
+See [CHANGELOG.md](CHANGELOG.md) for details.
+
 ## Screenshots
 
 The images below are screenshots of the browser demo in [`demo/index.html`](demo/index.html) (simulated data, a web re-implementation of the UI), not of the Android app itself.
@@ -35,7 +47,7 @@ App (`app/`):
 - Trade tab: balance, equity, margin, free margin, margin level; position and pending-order lists (modify / close / delete).
 - History tab: deals and P/L for today / 7 / 30 / 90 days.
 - Live prices over WebSocket, with connection diagnostics (explains common errors such as a bad URL, cleartext blocked, wrong API key, timeout, TLS fingerprint mismatch / untrusted certificate) and a "test connection" button.
-- **HTTPS** with optional SHA-256 certificate pinning for self-signed certificates (see [HTTPS](#https-self-signed-certificate-on-a-bare-ip-or-a-real-certificate)).
+- **HTTPS only** (v0.13+): `http://` / `ws://` addresses are rejected ("必须使用 HTTPS 地址") and the app never connects in cleartext. One-step setup: run `--setup` on the server, paste the **connection code** into the app (see [HTTPS](#https-one-step-setup-with-a-connection-code)). From v0.14 the app **remembers a self-signed certificate automatically** on the first successful connection test (trust on first use) and pins it from then on – customers only type the server address and the API key.
 - Crash log kept in the app's private storage (viewable/clearable in Settings); API keys / passwords / tokens are redacted from it.
 - **Demo mode** (default): in-memory simulated market and order matching, no account or server required.
 - Unit tests for the pure logic (`app/src/test`).
@@ -46,7 +58,7 @@ Server (`server/main.py`, FastAPI):
 - Quotes, candles, symbol info, account info, positions, pending orders, margin estimate, deal history.
 - Market order with TP/SL attached, modify position TP/SL (server-side re-validation), close position, place / modify / delete pending orders.
 - Server-time → UTC conversion (automatic, or fixed with `MT5_SERVER_UTC_OFFSET_HOURS`).
-- Optional TLS (`SSL_CERTFILE` / `SSL_KEYFILE`) and a self-signed certificate generator (`mt5-bridge.exe --make-cert <ip>` / `server/make-cert.py`).
+- One-step HTTPS setup: `mt5-bridge.exe --setup <ip>` (or `server/setup.bat` / `setup.py`) generates a strong API key and a self-signed certificate, writes `.env` and prints a **connection code** (plus a console QR code). Also available separately: `--make-cert <ip>` / `server/make-cert.py`.
 - Failed order requests are **not** retried automatically (to avoid duplicate fills).
 
 ## Architecture
@@ -142,34 +154,37 @@ python -m venv .venv
 
 Result: `server\dist\mt5-bridge\` containing `mt5-bridge.exe` and the `_internal` folder. **Keep both together** – the exe does not work alone. Copy `.env.example` into that folder, rename it to `.env`, fill it in, and double-click `mt5-bridge.exe` (or run it with `--host 0.0.0.0 --port 8000`). The spec has `upx=True`; if UPX is not installed PyInstaller simply skips it. PyInstaller executables are sometimes flagged by antivirus / SmartScreen (false positives); build it yourself if you do not trust a binary.
 
-## HTTPS (self-signed certificate on a bare IP, or a real certificate)
+## HTTPS (one-step setup with a connection code)
 
-The bridge can serve TLS itself. Set **both** `SSL_CERTFILE` and `SSL_KEYFILE` in `server/.env` (relative paths are resolved against the folder of `.env`); leave both empty and it keeps serving plain HTTP exactly as before.
+Since v0.13 the app **only talks HTTPS** – there is no cleartext fallback. Every customer runs **their own** bridge server and sets up **their own** API key; nobody has to handle certificates or fingerprints by hand. Three steps:
 
-1. **Generate a self-signed certificate** for your server's IP (10-year validity, the IP is written to `subjectAltName`; needs the `cryptography` package, already in `requirements.txt`; the PyInstaller exe has it built in):
+1. **On the server** (the Windows machine with the MT5 terminal), next to `.env` / `mt5-bridge.exe`:
    ```bat
-   mt5-bridge.exe --make-cert 203.0.113.10
-   :: or, when running from source:
-   python make-cert.py 203.0.113.10
+   mt5-bridge.exe --setup 203.0.113.10
+   :: from source:  python main.py --setup 203.0.113.10   (or double-click setup.bat)
    ```
-   `203.0.113.10` is a documentation-only address – use your server's own IP. This writes `cert.pem` and `key.pem` (**keep `key.pem` private**; `*.pem` is git-ignored) and prints the certificate's **SHA-256 fingerprint** (`AA:BB:…`, 32 groups). Existing files are not overwritten unless you add `--force` (then the fingerprint in the app must be updated).
-2. **Enable it in `.env`**, then restart the bridge (the console shows `https://…` and the fingerprint):
-   ```
-   HOST=0.0.0.0
-   SSL_CERTFILE=cert.pem
-   SSL_KEYFILE=key.pem
-   ```
-3. **Open the port** in Windows Firewall *and* in your cloud provider's security group (e.g. Tencent Cloud: Security Group → Inbound rules → TCP, your port), ideally restricted to your own IP.
-4. **In the app** (v0.12+): set the server URL to `https://<server-ip>:8000` and paste the fingerprint into **HTTPS 证书指纹 (SHA-256)**; use "test connection".
+   `203.0.113.10` is a documentation-only address – use your server's own public IP. In one go this: generates a random strong `BRIDGE_API_KEY` if `.env` has none (an existing key is kept), creates a 10-year self-signed certificate for that IP if `cert.pem` / `key.pem` are missing (existing ones are kept; `--force` regenerates), writes/updates `.env` (`BRIDGE_API_KEY`, `SSL_CERTFILE`, `SSL_KEYFILE`, `HOST=0.0.0.0`, `PORT`; other lines are preserved), and prints a single **connection code** plus a console QR code (`--no-qr` to skip). The private key is never printed. It is safe to run again – it prints the same code. The code is also printed at every normal start while TLS is on.
+2. **Open the port** (TCP, default 8000) in Windows Firewall *and* in your cloud provider's security group, then start the bridge.
+3. **In the app**: Settings → type the server address and the API key → 保存 → 测试连接. That is enough: on the first successful test the app records the server certificate's SHA-256 and pins it (v0.14+). Optional shortcut: **导入连接码** (under **高级**) → paste → the code fills URL, key and fingerprint at once; the pasted text stays in the box.
+
+The connection code is `MT5PRO1:` + base64url of the JSON `{"u": "https://<ip>:<port>", "k": "<api key>", "f": "<SHA-256 fingerprint>"}`. **It contains the API key – treat it like a password** (only send it to your own phone; do not post it publicly or in screenshots).
+
+Manual setup still works: type the `https://` address and the API key, and put the fingerprint (only needed for a self-signed certificate) under the collapsible **高级** section. The **生成密钥** button fills a random 256-bit API key – you must then also put the same value into the server's `.env` (`BRIDGE_API_KEY=`). With a real certificate (e.g. Let's Encrypt via `SSL_CERTFILE` / `SSL_KEYFILE`, or a reverse proxy such as Caddy) leave the fingerprint empty.
 
 How the app handles TLS:
 
-- `https://` **with** a fingerprint: only a server certificate whose leaf SHA-256 equals the fingerprint is accepted (certificate pinning, for both REST and the WebSocket). Nothing else is trusted – not even CA-signed certificates – and host-name verification is relaxed **only** in this pinned mode (the pin identifies the exact certificate). Expired certificates are still rejected.
-- `https://` **without** a fingerprint: normal system trust store and host-name verification (use this with a real certificate, e.g. Let's Encrypt, by pointing `SSL_CERTFILE` / `SSL_KEYFILE` at fullchain / privkey).
-- `http://`: unchanged. The `ws://` / `wss://` URL is derived from the http / https scheme.
+- `https://` **with** a fingerprint: only a server certificate whose leaf SHA-256 equals the fingerprint is accepted (certificate pinning, REST and WebSocket). Nothing else is trusted – not even CA-signed certificates – and host-name verification is relaxed **only** in this pinned mode (the pin identifies the exact certificate). Expired certificates are still rejected.
+- `https://` **without** a fingerprint: normal system trust store and host-name verification. If the server presents a self-signed / untrusted certificate, the first successful **测试连接** (and first real connect) with a **valid API key** records that certificate's SHA-256 into the saved config (shown under **高级**) and pins it from then on (trust on first use). The certificate is read with a handshake only; the API key is sent only over the already pinned connection. A malformed or different saved fingerprint is never replaced.
+- If a pinned certificate later changes, the app refuses with "服务器证书与已记录的不一致" and offers a **重置证书记录** button (Settings, 高级 and the connection banner); after a reset the next successful connection records the certificate again. Only reset if you regenerated the server certificate yourself.
+- No input box in Settings is ever cleared automatically (import success, errors, saving, tab switches, rotation); errors stay visible until you edit.
+- `http://` and `ws://`: **rejected** with "必须使用 HTTPS 地址" – in Settings (save is refused), in the test button, in the connection code import and when the client is created. If you omit the scheme the app assumes `https://`; a `wss://` address is treated as `https://`. OkHttp itself is also configured without the cleartext connection spec, does not follow https→http redirects, and the manifest sets `usesCleartextTraffic="false"`. Demo mode (no server) is unaffected.
 - Certificate verification is never switched off. The connection diagnosis explains fingerprint mismatch, untrusted / expired certificates, host-name mismatch and handshake failures (in Chinese).
 
-Once TLS is enabled, that port accepts only https: older app versions (≤ v0.11) and `http://` URLs can no longer connect.
+**Upgrading from v0.12 or earlier:** a saved `http://` server address stops working (the app shows the error and stays in demo mode) – run `--setup` on the server and import the connection code.
+
+### For distributors
+
+Each customer needs their own server and their own `--setup` run; there are no build-time defaults and no server address or key is ever compiled into the APK. Never commit a real IP, API key, connection code, `.env`, `*.pem` or fingerprint to a repository or put them in a README / `gradle.properties`.
 
 ## Building and installing the Android app
 
@@ -188,24 +203,26 @@ On Windows use `gradlew.bat`. The release build type is signed with the **debug*
 
 ### Install a prebuilt APK
 
-Download `mt-tpsl-v12.apk` (version 0.12) from the GitHub **Releases** page of this repository and install it on your phone. The APK is signed with a debug key, not a Play Store key; you must allow **installing from unknown sources** for your browser / file manager. You may need to uninstall an older build that was signed with a different key first. As with any APK from the internet, only install it if you trust the source – or build it yourself.
+Download `mt-tpsl-v15.apk` (version 0.15) from the GitHub **Releases** page of this repository and install it on your phone. The APK is signed with a debug key, not a Play Store key; you must allow **installing from unknown sources** for your browser / file manager. You may need to uninstall an older build that was signed with a different key first. As with any APK from the internet, only install it if you trust the source – or build it yourself.
 
 ### Configure the app
 
 Open **Settings** (设置):
 
 1. Turn **demo mode** off (it is on by default).
-2. **Server URL**: e.g. `http://203.0.113.10:8000` (an IP or domain plus port; `203.0.113.10` is a documentation-only address – use your own). `https://<server-ip>:8000` once HTTPS is enabled on the bridge, or `https://your.domain.com` behind a reverse proxy / real certificate. If you omit the scheme the app prepends `http://`.
-3. **HTTPS certificate fingerprint (SHA-256)**: only for a self-signed certificate – paste the fingerprint printed by `--make-cert`; leave empty for normal CA-signed certificates and for `http://`.
-4. **API key**: the value of `BRIDGE_API_KEY` on the server.
+2. Easiest: just the server address and the API key – the certificate is remembered automatically on the first successful test connection (v0.14+). Optional: **导入连接码** under **高级** – run `mt5-bridge.exe --setup <your-server-ip>` on the server, copy the connection code it prints, paste it in the app.
+3. Or manually: **Server URL** `https://<server-ip>:8000` (an IP or domain plus port; HTTPS only, `http://` is refused; if you omit the scheme the app assumes `https://`), and the **API key** (the value of `BRIDGE_API_KEY` on the server; "生成密钥" creates a random one that you must also put into the server's `.env`).
+4. **高级** (collapsed): the recorded **HTTPS certificate fingerprint (SHA-256)** (optional; filled in automatically, can be reset), and the optional connection-code import.
 5. Save, then use the connection test button.
 
 The app stores the server URL and API key in its private preferences (Jetpack DataStore). It never stores your MT5 login or password – those only live in the server's `.env`.
 
 ## Security
 
-- **Plain HTTP by default.** Unless you enable TLS (see [HTTPS](#https-self-signed-certificate-on-a-bare-ip-or-a-real-certificate)), the server speaks HTTP and the Android manifest sets `usesCleartextTraffic="true"`, so the API key and all trading traffic are sent **unencrypted**. Do not expose the port directly to the internet over plain HTTP; enable HTTPS with certificate pinning.
-- **Self-signed certificates:** the fingerprint you paste into the app must come from a trusted channel (the server console / your own copy of the output). `key.pem` is a private key – never share or commit it.
+- **HTTPS only (v0.13+).** The app refuses `http://` / `ws://` addresses and the Android manifest sets `usesCleartextTraffic="false"`; the bridge itself still speaks plain HTTP until TLS is enabled (run `--setup`), so do not expose the port before that. A plain-HTTP bridge is simply unreachable from the app.
+- Chart: the TP / SL lines of open positions and the lines of pending orders can be dragged up/down (24dp touch tolerance, vertical drags do not pan the chart); after release a confirm bar "修改持仓 … 旧价 → 新价" appears and nothing is sent until you confirm (v0.14 fixed position TP/SL lines that could not be dragged).
+- **The connection code contains the API key.** Treat it like a password: only copy it to your own phone, never post it publicly. Anyone who has it can control the connected account.
+- **Self-signed certificates:** trust on first use means the certificate seen on the first successful connection is trusted from then on, so do the first test on a network you trust (or paste the fingerprint / connection code from the server console yourself, which pins it up front). `key.pem` is a private key – never share or commit it.
 - Alternatively put a reverse proxy with HTTPS in front (e.g. Caddy: `caddy reverse-proxy --from your.domain.com --to 127.0.0.1:8000`) and keep the bridge on `127.0.0.1`. Alternatively reach the server through a VPN / overlay network such as Tailscale or ZeroTier.
 - **Restrict access by IP:** use the Windows firewall and your cloud provider's security group to allow only your own IPs.
 - Use a long random `BRIDGE_API_KEY`. Anyone with the key and network access can place and close trades on the connected account.
@@ -232,7 +249,7 @@ This project is an independent work and is **not affiliated with, endorsed by or
 
 ```
 app/        Android app (Kotlin, Jetpack Compose) and unit tests
-server/     FastAPI bridge (main.py), certgen.py + make-cert.py (self-signed certificate), .env.example, run.bat, mt5-bridge.spec (PyInstaller)
+server/     FastAPI bridge (main.py), certgen.py (+ miniqr.py QR) / setup.py / setup.bat (one-step setup), make-cert.py (self-signed certificate), test_setup.py, .env.example, run.bat, mt5-bridge.spec (PyInstaller)
 demo/       Browser demo of the UI (index.html) and screenshots
 docs/       Historical development notes (Chinese)
 ```

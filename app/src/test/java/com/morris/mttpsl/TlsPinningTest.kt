@@ -112,14 +112,19 @@ class TlsPinningTest {
     // ---------- 何时启用固定 / 主机名校验只在固定模式放宽 ----------
     @Test fun pinningOnlyForHttpsWithFingerprint() {
         val fp = hex(selfSigned()); val default = OkHttpClient()
-        val httpClient = OkHttpClient.Builder().applyServerTls("http://$placeholderHost:8000", fp).build()
         val httpsNoFp = OkHttpClient.Builder().applyServerTls("https://$placeholderHost:8000", "  ").build()
         val pinned = OkHttpClient.Builder().applyServerTls("https://$placeholderHost:8000", fp).build()
-        assertSame(default.hostnameVerifier.javaClass, httpClient.hostnameVerifier.javaClass)
         assertSame(default.hostnameVerifier.javaClass, httpsNoFp.hostnameVerifier.javaClass)
-        assertNotSame(PinnedHostnameVerifier, httpClient.hostnameVerifier); assertNotSame(PinnedHostnameVerifier, httpsNoFp.hostnameVerifier)
+        assertNotSame(PinnedHostnameVerifier, httpsNoFp.hostnameVerifier)
         assertSame(PinnedHostnameVerifier, pinned.hostnameVerifier)
         assertSame(default.sslSocketFactory, httpsNoFp.sslSocketFactory.let { default.sslSocketFactory }) // 无指纹不替换 SSLSocketFactory
+    }
+    @Test fun httpAndWsUrlsAreRejectedEvenWithFingerprint() {
+        val fp = hex(selfSigned())
+        for (u in listOf("http://$placeholderHost:8000", "ws://$placeholderHost:8000", "HTTP://a.b", "ftp://a.b")) {
+            assertTrue(u, try { OkHttpClient.Builder().applyServerTls(u, fp); false } catch (_: HttpsRequiredException) { true })
+            assertTrue(u, try { OkHttpClient.Builder().applyServerTls(u, ""); false } catch (_: HttpsRequiredException) { true })
+        }
     }
 
     // ---------- URL 协议推导 ----------
@@ -133,8 +138,8 @@ class TlsPinningTest {
         assertEquals("https://$placeholderHost:8443", normalizeServerUrl("wss://$placeholderHost:8443/"))
         assertEquals("http://$placeholderHost:8000", normalizeServerUrl("WS://$placeholderHost:8000"))
         assertEquals("https://$placeholderHost:8443", normalizeServerUrl("https://$placeholderHost:8443"))
-        assertEquals("http://$placeholderHost:8000", normalizeServerUrl("$placeholderHost:8000"))
-        assertTrue(isHttpsUrl(normalizeServerUrl("wss://x.y"))); assertFalse(isHttpsUrl(normalizeServerUrl("x.y:8000")))
+        assertEquals("https://$placeholderHost:8000", normalizeServerUrl("$placeholderHost:8000"))
+        assertTrue(isHttpsUrl(normalizeServerUrl("wss://x.y"))); assertFalse(isHttpsUrl(normalizeServerUrl("http://x.y:8000"))); assertTrue(isHttpsUrl(normalizeServerUrl("x.y:8000")))
         assertTrue(isValidServerUrl(normalizeServerUrl("https://$placeholderHost:8443")))
     }
 
@@ -210,11 +215,12 @@ class TlsPinningTest {
         assertEquals(ConnKind.TLS_PIN_MISMATCH, r.issue.kind)
         assertEquals(0, s.requestCount) // 握手失败 → 没有 HTTP 请求（API Key 没发出去）
     }
-    @Test fun e2eNoFingerprintSelfSignedUsesSystemTrustAndIsRejected() = httpsServer(selfSigned()) { s, _ ->
+    @Test fun e2eNoFingerprintSelfSignedIsLearnedOnceKeyIsValid() = httpsServer(selfSigned()) { s, fp ->
+        // v0.14 TOFU：没有指纹 + 自签名证书 → 记录证书并固定（详见 TofuTest）；系统信任库仍然不信任它
         okAnswers(s)
-        val r = runBlocking { ConnectionTester().test(urlOf(s), "k") } as ConnTestResult.Failure
-        assertEquals("raw=${r.issue.raw}", ConnKind.TLS_UNTRUSTED, r.issue.kind)
-        assertEquals(0, s.requestCount)
+        val r = runBlocking { ConnectionTester().test(urlOf(s), "k") } as ConnTestResult.Success
+        assertEquals(colon(fp), r.learnedFingerprint)
+        assertEquals(2, s.requestCount)
     }
     @Test fun e2eBadFingerprintFormatReportedBeforeAnyRequest() = httpsServer(selfSigned()) { s, _ ->
         okAnswers(s)
@@ -230,12 +236,14 @@ class TlsPinningTest {
             assertEquals(ConnKind.TLS_EXPIRED, r.issue.kind)
         }
     }
-    @Test fun e2eFingerprintIgnoredForPlainHttp() {
+    @Test fun e2ePlainHttpIsRefusedWithoutAnyConnection() {
         val s = MockWebServer(); s.start()
         try {
             okAnswers(s)
-            val r = runBlocking { ConnectionTester().test("http://${s.hostName}:${s.port}", "k", "garbage-ignored-for-http") }
-            assertTrue(r is ConnTestResult.Success)
+            val r = runBlocking { ConnectionTester().test("http://${s.hostName}:${s.port}", "k", "garbage-ignored-for-http") } as ConnTestResult.Failure
+            assertEquals(ConnKind.HTTPS_REQUIRED, r.issue.kind)
+            assertEquals(HTTPS_REQUIRED_MESSAGE, r.issue.title)
+            assertEquals("never connects in cleartext", 0, s.requestCount)
         } finally { s.shutdown() }
     }
     @Test fun e2eRestThroughTradingApiWithPin() = httpsServer(selfSigned()) { s, fp ->

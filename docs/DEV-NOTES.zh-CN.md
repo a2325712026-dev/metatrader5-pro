@@ -52,3 +52,24 @@ Android (Kotlin + Jetpack Compose, Canvas 自绘 K 线) → **自建小后端**�
 - App：地址可填 `https://…`（ws/wss 由 http/https 推导）；设置新增“HTTPS 证书指纹 (SHA-256)”。https + 指纹 → 只信任叶子证书 SHA-256 一致的服务器（REST 与 WebSocket 同一套，仅此模式放宽主机名校验）；https 无指纹 → 系统信任库 + 标准主机名校验；http 行为不变。永不关闭校验。
 - 连接诊断新增中文提示：指纹不匹配 / 证书不受信任 / 证书与地址不匹配 / 证书过期 / 指纹格式错误 / 握手失败。逻辑在 `api/TlsPinning.kt`，测试 `TlsPinningTest.kt`（本地 HTTPS/WSS MockWebServer 端到端）。
 - 版本 0.12（versionCode 12）。
+
+## 2026-10-28 v13：只允许 HTTPS + 一键配置 / 连接码
+- App：`http://` / `ws://` 地址一律拒绝，提示“必须使用 HTTPS 地址”（保存设置、测试连接、导入连接码、创建客户端、OkHttp 拦截器都检查；`normalizeServerUrl` 没写协议时默认 `https://`，不会悄悄把 http 改成 https）。清单 `usesCleartextTraffic="false"`；OkHttp 去掉 CLEARTEXT 连接规格并禁止 https→http 重定向。演示模式不受影响。旧版保存的 http 地址会提示错误并停在演示模式。
+- 设置页：“导入连接码”（剪贴板粘贴 + 文本框）一次填好地址 / API Key / 指纹；“生成密钥”（256 位随机，需同时写入服务器 `.env`）；证书指纹放在可折叠“高级”里。解析 / 生成逻辑是纯函数：`api/ConnectionCode.kt`，测试 `ConnectionCodeTest.kt`、`HttpsOnlyTest.kt`。
+- 连接码：`MT5PRO1:` + base64url(JSON `{u, k, f}`)；含 API Key，须保密。
+- 服务端：`mt5-bridge.exe --setup <IP>`（或 `setup.bat` / `setup.py`）一步生成 API Key（为空才生成）+ 自签名证书（缺失才生成），写入 `.env`，打印连接码和控制台二维码（`miniqr.py`，纯 Python）；TLS 开启时正常启动也打印连接码。测试：`server/test_setup.py`（用真实 main.py + MetaTrader5 桩，连接码往返、指纹与 openssl 一致）。
+- 没有编译期默认值：每位用户自己的服务器、自己的密钥；真实 IP / 指纹 / 密钥不进任何源码或文档。
+- 版本 0.13（versionCode 13）。
+
+## 2026-10-28 v14：首次连接自动记住证书（TOFU）+ 输入框永不自动清空 + 持仓 TP/SL 线可拖动
+- 仍然只允许 HTTPS（`http://` / `ws://` 照旧拒绝）。
+- 客户只需填**服务器地址 + API Key**。没有指纹且服务器出示自签名 / 不受信任证书时，第一次“测试连接”（以及首次真正连接）在 API Key 验证成功后，自动把该证书的 SHA-256 记入已保存配置并从此固定；设置“高级”里显示已记录的指纹。之后证书变了 → 拒绝连接，提示“服务器证书与已记录的不一致”，并给“重置证书记录”按钮（设置页、高级、顶部连接提示条都有）。已有指纹时绝不放宽固定；API Key 只会发给已固定的连接（先只握手读证书，不发任何请求）。逻辑在 `api/Tofu.kt`（`shouldLearnPin` / `CertProbe` 可注入）与 `ConnectionTester`，测试 `TofuTest.kt`。连接码导入和指纹输入框保留，但都是可选的（高级）。
+- 设置页任何输入框都不会被程序自动清空：连接码导入成功后文本仍留在框里，出错时保留文本，错误一直显示到用户再次编辑；去掉了 `remember(initial)` 式的整页重置（以前保存任一开关会清掉所有未保存输入）。所有输入状态集中在 Activity 持有的 `SettingsDraft`（`ui/SettingsDraft.kt`），切换标签页 / 旋转 / 保存 / 记住证书都不会丢，测试 `SettingsDraftTest.kt`。
+- 图表修复：已开仓持仓的 TP / SL 线（图上 “tp #id” / “sl #id”）上下拖动没反应。根因：这两条线只是只读装饰线（`StaticLine` 无 `positionId`），不在手势的命中集合里（命中集合只有 持仓开仓线 + 挂单线 + 新建/编辑订单时的编辑线），竖直滑动于是落到“平移”分支。现在它们和挂单线一样可拖（触点容差 24dp，竖直位移占优才算拖线，所以不会平移图表），松手后出现“修改持仓 止盈/止损 旧价 → 新价”确认条，确认才调用 `modifyPosition`（另一条 TP/SL 保持不变），取消则回到原价；价格按品种位数吸附，按买/卖方向和最小止损距离校验，不合法时线变红、松手提示中文错误且不发请求。逻辑：`PositionLineMoves`（`ui/PositionLines.kt`）、`MainViewModel.proposePositionMove / confirmPositionMove`；测试 `PositionLineDragTest.kt`。挂单线原本就可拖（走 `orderYs` 路径），未改动。
+- 服务端代码未改动（v13 的 exe 包仍是当前服务端包）。版本 0.14（versionCode 14）。
+
+## 2026-10-29 v15：部分平仓 + 拖动 SL/TP 实时盈亏标签 + MT5 风格按钮 + 连接稳定性
+- 持仓支持部分平仓；服务端 `/close` 新增 `volume` 参数。
+- 拖动 SL/TP 线时实时显示 USD / 点数；未启用的 SL/TP 按钮显示为灰色。
+- 所有请求共用一个固定证书的 HTTP 客户端（BridgeHttp），带重试。
+- 服务端：`/health` 返回 `version`（15），品种信息含 tick value / tick size，`--setup` 安装看门狗计划任务。版本 0.15（versionCode 15）。

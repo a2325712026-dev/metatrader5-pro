@@ -30,7 +30,7 @@ private fun Tab.icon(): ImageVector = when (this) {
 }
 
 @Composable
-fun AppRoot(vm: MainViewModel, status: String, settings: @Composable () -> Unit) {
+fun AppRoot(vm: MainViewModel, status: String, onResetPin: () -> Unit = {}, settings: @Composable () -> Unit) {
     val tab by vm.tab.collectAsState()
     val confirm by vm.confirm.collectAsState()
     val message by vm.message.collectAsState()
@@ -63,7 +63,7 @@ fun AppRoot(vm: MainViewModel, status: String, settings: @Composable () -> Unit)
             },
         ) { pad ->
             Column(Modifier.fillMaxSize().padding(pad).consumeWindowInsets(pad)) {
-              issue?.let { i -> if (tab != Tab.SETTINGS) ConnectionBanner(i, onRetry = vm::retryConnection, onSettings = { vm.selectTab(Tab.SETTINGS) }) }
+              issue?.let { i -> if (tab != Tab.SETTINGS) ConnectionBanner(i, onRetry = vm::retryConnection, onSettings = { vm.selectTab(Tab.SETTINGS) }, onResetPin = onResetPin) }
               Box(Modifier.fillMaxWidth().weight(1f)) {
                 when (tab) {
                     Tab.QUOTES -> QuotesScreen(vm)
@@ -89,7 +89,7 @@ fun AppRoot(vm: MainViewModel, status: String, settings: @Composable () -> Unit)
 
 /** 连接失败时显示在每个页面顶部的红色横幅：中文原因 + 原始异常小字 + 重试 / 去设置 */
 @Composable
-fun ConnectionBanner(issue: com.morris.mttpsl.api.ConnIssue, onRetry: () -> Unit, onSettings: () -> Unit) {
+fun ConnectionBanner(issue: com.morris.mttpsl.api.ConnIssue, onRetry: () -> Unit, onSettings: () -> Unit, onResetPin: () -> Unit = {}) {
     Column(Modifier.fillMaxWidth().background(Color(0xFF5A1D20)).padding(horizontal = 12.dp, vertical = 8.dp)) {
         Text("⚠ ${issue.title}", color = Color.White, fontSize = 14.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
         Text(issue.hint, color = Color(0xFFFFCDD2), fontSize = 12.sp)
@@ -97,6 +97,8 @@ fun ConnectionBanner(issue: com.morris.mttpsl.api.ConnIssue, onRetry: () -> Unit
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(onClick = onRetry, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp)) { Text("重试") }
             OutlinedButton(onClick = onSettings, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp)) { Text("去设置 / 测试连接") }
+            if (issue.kind == com.morris.mttpsl.api.ConnKind.TLS_PIN_MISMATCH)
+                OutlinedButton(onClick = onResetPin, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp)) { Text("重置证书记录") }
         }
     }
 }

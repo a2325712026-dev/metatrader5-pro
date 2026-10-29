@@ -12,7 +12,13 @@ data class Position(
     val currentPrice: Double = openPrice, val profit: Double = 0.0,
 )
 
-data class SymbolSpec(val symbol: String, val digits: Int, val point: Double, val stopsLevelPoints: Int) {
+data class SymbolSpec(
+    val symbol: String, val digits: Int, val point: Double, val stopsLevelPoints: Int,
+    /** 交易量限制（MT5 symbol_info.volume_min / volume_step / volume_max） */
+    val volumeMin: Double = 0.01, val volumeStep: Double = 0.01, val volumeMax: Double = 100.0,
+    /** 合约大小 / 每跳价值（账户货币）/ 跳动大小；服务器未提供时为 0（回退到公式 / 持仓反推） */
+    val contractSize: Double = 0.0, val tickValue: Double = 0.0, val tickSize: Double = 0.0,
+) {
     /** 外汇 5/3 位报价：1 pip = 10 points */
     val pip: Double get() = if (digits == 5 || digits == 3) point * 10 else point
 }
@@ -77,6 +83,8 @@ interface TradingApi {
     suspend fun calcMargin(symbol: String, side: Side, volume: Double, price: Double? = null): Double?
     suspend fun modifyPosition(positionId: String, takeProfit: Double?, stopLoss: Double?): TradeResult
     suspend fun closePosition(positionId: String): TradeResult
+    /** 部分平仓（MT5：TRADE_ACTION_DEAL 反向单，position = ticket，volume = 平仓手数）。默认实现不支持。 */
+    suspend fun closePosition(positionId: String, volume: Double): TradeResult = TradeResult.Error("当前数据源不支持部分平仓")
     suspend fun placePending(
         symbol: String, type: PendingType, volume: Double, price: Double, stopLimit: Double?,
         sl: Double?, tp: Double?, expiration: Expiration, comment: String = "",

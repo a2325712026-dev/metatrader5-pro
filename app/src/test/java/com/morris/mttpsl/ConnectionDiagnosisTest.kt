@@ -18,8 +18,8 @@ import javax.net.ssl.SSLHandshakeException
 
 class ConnectionDiagnosisTest {
     // ---------- URL 规范化 ----------
-    @Test fun normalizeAddsHttpWhenNoScheme() {
-        assertEquals("http://203.0.113.10:8000", normalizeServerUrl("203.0.113.10:8000"))
+    @Test fun normalizeAddsHttpsWhenNoScheme() {
+        assertEquals("https://203.0.113.10:8000", normalizeServerUrl("203.0.113.10:8000"))
     }
     @Test fun normalizeTrimsSpacesAndTrailingSlashes() {
         assertEquals("http://203.0.113.10:8000", normalizeServerUrl("  http://203.0.113.10:8000//  "))
@@ -29,7 +29,7 @@ class ConnectionDiagnosisTest {
         assertEquals("https://a.b:8443", normalizeServerUrl("HTTPS://a.b:8443"))
     }
     @Test fun normalizeHandlesFullWidthColonAndInnerSpaces() {
-        assertEquals("http://1.2.3.4:8000", normalizeServerUrl("1.2.3.4：8000 "))
+        assertEquals("https://1.2.3.4:8000", normalizeServerUrl("1.2.3.4：8000 "))
         assertEquals("http://1.2.3.4:8000", normalizeServerUrl("http://1.2.3.4: 8000"))
     }
     @Test fun normalizeEmptyStaysEmpty() {
@@ -95,6 +95,7 @@ class ConnectionDiagnosisTest {
     @Test fun titlesAreChinese() {
         ConnKind.entries.forEach { k ->
             val i = when (k) {
+                ConnKind.HTTPS_REQUIRED -> classifyError(HttpsRequiredException("http://x"))
                 ConnKind.CLEARTEXT_BLOCKED -> classifyError(UnknownServiceException("CLEARTEXT x"))
                 ConnKind.TIMEOUT -> classifyError(SocketTimeoutException("t"))
                 ConnKind.REFUSED -> classifyError(ConnectException("Connection refused"))
@@ -119,10 +120,11 @@ class ConnectionDiagnosisTest {
     }
 
     // ---------- ConnectionTester（真实 OkHttp + 本地 MockWebServer）----------
+    private var fp = "" // 当前测试 HTTPS 服务器的证书指纹（自签名 → 必须固定）
     private fun withServer(block: (MockWebServer) -> Unit) {
-        val s = MockWebServer(); s.start(); try { block(s) } finally { s.shutdown() }
+        val (s, f) = TestHttps.start(); fp = f; try { block(s) } finally { s.shutdown() }
     }
-    private fun url(s: MockWebServer) = "${s.hostName}:${s.port}" // 故意不写 http://
+    private fun url(s: MockWebServer) = "${s.hostName}:${s.port}" // 故意不写协议：默认按 https:// 处理
 
     @Test fun testerSuccessShowsAccount() = withServer { s ->
         s.dispatcher = object : Dispatcher() {
@@ -134,7 +136,7 @@ class ConnectionDiagnosisTest {
                 else -> MockResponse().setResponseCode(404)
             }
         }
-        val r = kotlinx.coroutines.runBlocking { ConnectionTester().test(url(s), " k1 ") }
+        val r = kotlinx.coroutines.runBlocking { ConnectionTester().test(url(s), " k1 ", fp) }
         assertTrue(r is ConnTestResult.Success)
         val sum = (r as ConnTestResult.Success).summary()
         assertTrue(sum.contains("123") && sum.contains("1000.50") && sum.contains("USD")); assertFalse(sum.contains("k1"))
@@ -144,14 +146,14 @@ class ConnectionDiagnosisTest {
             override fun dispatch(request: RecordedRequest) =
                 if (request.path == "/health") MockResponse().setBody("ok") else MockResponse().setResponseCode(401).setBody("nope")
         }
-        val r = kotlinx.coroutines.runBlocking { ConnectionTester().test(url(s), "wrong") } as ConnTestResult.Failure
+        val r = kotlinx.coroutines.runBlocking { ConnectionTester().test(url(s), "wrong", fp) } as ConnTestResult.Failure
         assertEquals(ConnKind.AUTH, r.issue.kind); assertTrue(r.step.contains("/account"))
     }
     @Test fun testerServerErrorKeepsCode() = withServer { s ->
         s.dispatcher = object : Dispatcher() {
             override fun dispatch(request: RecordedRequest) = MockResponse().setResponseCode(503).setBody("down")
         }
-        val r = kotlinx.coroutines.runBlocking { ConnectionTester().test(url(s), "k") } as ConnTestResult.Failure
+        val r = kotlinx.coroutines.runBlocking { ConnectionTester().test(url(s), "k", fp) } as ConnTestResult.Failure
         assertEquals(ConnKind.SERVER_ERROR, r.issue.kind); assertTrue(r.issue.title.contains("503")); assertTrue(r.step.contains("/health"))
     }
     @Test fun testerRefused() {
@@ -167,7 +169,7 @@ class ConnectionDiagnosisTest {
     }
     @Test fun bridgeApiNormalisesUrlAndThrowsHttpStatus() = withServer { s ->
         s.enqueue(MockResponse().setResponseCode(401).setBody("bad"))
-        val api = Mt5BridgeTradingApi("  ${url(s)}/ ", "k")
+        val api = Mt5BridgeTradingApi("  ${url(s)}/ ", "k", fp)
         val e = try { kotlinx.coroutines.runBlocking { api.account() }; null } catch (e: HttpStatusException) { e }
         assertEquals(401, e!!.code)
     }

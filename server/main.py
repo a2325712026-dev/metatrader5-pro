@@ -150,7 +150,7 @@ def filling_mode(info):
 
 @app.get("/health")
 def health():
-    return {"ok": True}
+    return {"ok": True, "version": 15, "partial_close": True}
 
 
 @app.get("/account", dependencies=[Depends(auth)])
@@ -166,7 +166,11 @@ def symbol(symbol: str):
     i = ensure_symbol(symbol)
     return {"symbol": i.name, "digits": i.digits, "point": i.point,
             "trade_stops_level": i.trade_stops_level, "trade_freeze_level": i.trade_freeze_level,
-            "volume_min": i.volume_min, "volume_step": i.volume_step, "volume_max": i.volume_max}
+            "volume_min": i.volume_min, "volume_step": i.volume_step, "volume_max": i.volume_max,
+            "trade_contract_size": i.trade_contract_size, "trade_tick_value": i.trade_tick_value,
+            "trade_tick_value_profit": getattr(i, "trade_tick_value_profit", i.trade_tick_value),
+            "trade_tick_value_loss": getattr(i, "trade_tick_value_loss", i.trade_tick_value),
+            "trade_tick_size": i.trade_tick_size, "currency_profit": i.currency_profit}
 
 
 @app.get("/candles", dependencies=[Depends(auth)])
@@ -250,17 +254,47 @@ def modify(ticket: int, m: ModifyIn):
     return result_dict(call(mt5.order_send, req))
 
 
+class CloseIn(BaseModel):
+    volume: float = 0.0  # 0 / 省略 = 全部平仓
+
+
+def close_volume(requested: float, position_volume: float, vmin: float, vstep: float) -> float:
+    """部分平仓手数校验（与 MT5 一致）：0 = 全部；必须 >= volume_min、为 volume_step 的整数倍、<= 持仓手数；
+    剩余手数若不为 0 也必须 >= volume_min。不合法抛 ValueError。"""
+    if requested is None or requested <= 0 or abs(requested - position_volume) < 1e-9:
+        return position_volume
+    if requested > position_volume + 1e-9:
+        raise ValueError(f"volume {requested} > position volume {position_volume}")
+    if vmin > 0 and requested < vmin - 1e-9:
+        raise ValueError(f"volume {requested} < volume_min {vmin}")
+    if vstep > 0:
+        n = round(requested / vstep)
+        if abs(n * vstep - requested) > 1e-7:
+            raise ValueError(f"volume {requested} is not a multiple of volume_step {vstep}")
+        requested = round(n * vstep, 8)
+    rest = position_volume - requested
+    if rest > 1e-9 and vmin > 0 and rest < vmin - 1e-9:
+        raise ValueError(f"remaining volume {rest:g} < volume_min {vmin}")
+    return requested
+
+
 @app.post("/positions/{ticket}/close", dependencies=[Depends(auth)])
-def close(ticket: int):
+def close(ticket: int, c: Optional[CloseIn] = None):
     p = get_position(ticket)
     info = ensure_symbol(p.symbol)
+    try:
+        vol = close_volume(c.volume if c else 0.0, p.volume, info.volume_min, info.volume_step)
+    except ValueError as e:
+        return {"ok": False, "retcode": None, "comment": str(e)}
     tick = call(mt5.symbol_info_tick, p.symbol)
     buy = p.type == mt5.POSITION_TYPE_BUY
-    req = {"action": mt5.TRADE_ACTION_DEAL, "position": ticket, "symbol": p.symbol, "volume": p.volume,
+    req = {"action": mt5.TRADE_ACTION_DEAL, "position": ticket, "symbol": p.symbol, "volume": vol,
            "type": mt5.ORDER_TYPE_SELL if buy else mt5.ORDER_TYPE_BUY,
            "price": tick.bid if buy else tick.ask, "deviation": DEVIATION, "magic": MAGIC,
            "comment": "tpsl-app close", "type_time": mt5.ORDER_TIME_GTC, "type_filling": filling_mode(info)}
-    return result_dict(call(mt5.order_send, req))
+    r = result_dict(call(mt5.order_send, req))
+    r["volume"] = vol
+    return r
 
 
 @app.websocket("/ws/ticks")
@@ -473,7 +507,7 @@ def resolve_tls():
     cert, key = (p if os.path.isabs(p) else os.path.join(BASE_DIR, p) for p in (cert, key))
     for label, p in (("SSL_CERTFILE", cert), ("SSL_KEYFILE", key)):
         if not os.path.isfile(p):
-            raise RuntimeError(f"{label} 指向的文件不存在: {p}（先运行 mt5-bridge.exe --make-cert <服务器IP> 生成）")
+            raise RuntimeError(f"{label} 指向的文件不存在: {p}（先运行 mt5-bridge.exe --setup <服务器IP> 生成）")
     return cert, key
 
 
@@ -484,8 +518,13 @@ def cli():
     p.add_argument("--host", default=os.environ.get("HOST", "127.0.0.1"))
     p.add_argument("--port", type=int, default=int(os.environ.get("PORT", "8000")))
     p.add_argument("--make-cert", metavar="IP", help="生成自签名 HTTPS 证书（cert.pem / key.pem，写到 .env 旁边）并打印 SHA-256 指纹，然后退出")
-    p.add_argument("--force", action="store_true", help="与 --make-cert 合用：覆盖已有的 cert.pem / key.pem")
+    p.add_argument("--force", action="store_true", help="与 --make-cert / --setup 合用：覆盖已有的 cert.pem / key.pem（旧连接码和指纹随之失效）")
+    p.add_argument("--setup", metavar="IP", help="一键配置：自动生成 API Key（.env 里为空才生成）和自签名证书（缺失才生成），写入 .env，并打印手机 App 用的“连接码”，然后退出")
+    p.add_argument("--no-qr", action="store_true", help="与 --setup 合用：不打印二维码")
     args = p.parse_args()
+    if args.setup:
+        from certgen import run_setup  # 延迟导入：只有用到时才需要 cryptography
+        return run_setup(args.setup, BASE_DIR, args.port, args.force, qr=not args.no_qr)
     if args.make_cert:
         from certgen import run_make_cert  # 延迟导入：只有用到时才需要 cryptography
         return run_make_cert(args.make_cert, BASE_DIR, args.force)
@@ -499,17 +538,25 @@ def cli():
         print(f" HTTPS: 已启用（证书 {ssl_cert}）", flush=True)
         try:
             from certgen import cert_fingerprint
-            print(f" 证书 SHA-256 指纹: {cert_fingerprint(ssl_cert)}", flush=True)
+            fp = cert_fingerprint(ssl_cert)
+            print(f" 证书 SHA-256 指纹: {fp}", flush=True)
+            if API_KEY:
+                from certgen import cert_hosts, format_base_url, make_connection_code, print_connection_code
+                hosts = cert_hosts(ssl_cert)
+                if hosts:
+                    print("-" * 56, flush=True)
+                    print_connection_code(make_connection_code(format_base_url(hosts[0], args.port), API_KEY, fp))
+                    print("-" * 56, flush=True)
         except Exception:
-            pass  # 没有 cryptography / 证书不是 PEM 单证书：只是不显示指纹，不影响启动
+            pass  # 没有 cryptography / 证书不是 PEM 单证书：只是不显示指纹 / 连接码，不影响启动
     elif args.host not in ("127.0.0.1", "localhost"):
-        print(" 注意：已对外监听但未启用 HTTPS（API Key 明文传输）。建议：mt5-bridge.exe --make-cert <服务器IP>，再在 .env 设置 SSL_CERTFILE / SSL_KEYFILE", flush=True)
+        print(" 注意：已对外监听但未启用 HTTPS（API Key 明文传输）。建议：运行 mt5-bridge.exe --setup <服务器IP> 一键启用 HTTPS 并生成手机连接码", flush=True)
     if args.host not in ("127.0.0.1", "localhost"):
         print(" 注意：已对外监听，请务必设置强 API Key", flush=True)
     print(" 按 Ctrl+C 停止", flush=True)
     print("=" * 56, flush=True)
     if not API_KEY:
-        print("[错误] 未设置 BRIDGE_API_KEY（在 .env 中填写）", flush=True)
+        print("[错误] 未设置 BRIDGE_API_KEY（运行 mt5-bridge.exe --setup <服务器IP> 自动生成，或在 .env 中填写）", flush=True)
         return 2
     kw = {"ssl_certfile": ssl_cert, "ssl_keyfile": ssl_key} if ssl_cert else {}
     uvicorn.run(app, host=args.host, port=args.port, log_level="info", **kw)

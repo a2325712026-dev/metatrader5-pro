@@ -6,7 +6,8 @@ import com.morris.mttpsl.domain.TpSlValidator
 import kotlin.math.abs
 
 /** 图上一条挂单线：ticket + 线种类（[LineId]：ENTRY / STOP_LIMIT / TP / SL）+ 价格 */
-data class OrderLineRef(val ticket: String, val kind: Int, val price: Double)
+/** [positionLine] = true：这是已开仓持仓的 TP/SL 线（ticket = 持仓 id），不是挂单线 */
+data class OrderLineRef(val ticket: String, val kind: Int, val price: Double, val positionLine: Boolean = false)
 
 /** 等待用户“确认修改”的挂单改价提案（松手后生成，确认/取消后清除） */
 data class OrderMoveProposal(val order: PendingOrder, val kind: Int, val oldPrice: Double, val newPrice: Double) {

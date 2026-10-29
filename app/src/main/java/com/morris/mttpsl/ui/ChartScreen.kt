@@ -58,7 +58,11 @@ fun ChartScreen(vm: MainViewModel) {
     val live = remember { LiveLines() }
     val quoteList by vm.quotes.collectAsState()
     val mids = remember(quoteList) { quoteList.associate { it.symbol to (it.bid + it.ask) / 2 } }
-    val calib = remember(trade.positions, s.symbol) { ProfitCalc.calibrate(trade.positions, s.symbol) }
+    // 每价格单位每手的账户货币值：优先用服务器品种参数（tick_value / tick_size，与 MT5 一致），其次用持仓 profit 反推，最后按合约大小公式
+    val calib = remember(trade.positions, s.symbol, s.spec) {
+        s.spec?.let { ProfitCalc.unitValueFromSpec(it.tickValue, it.tickSize) } ?: ProfitCalc.calibrate(trade.positions, s.symbol)
+            ?: s.spec?.let { sp -> ProfitCalc.unitValueFromContract(s.symbol, sp.contractSize, s.quote?.bid ?: 0.0, mids) }
+    }
     val cur = trade.account?.currency ?: "USD"
     val pnl = PnlCtx(s, mids, calib, cur)
     // imePadding：键盘弹出时整页上移/收缩，输入框与“下单”按钮不被遮挡；panelMaxH：面板最多占 72% 可用高度，其余可滚动
@@ -79,14 +83,18 @@ fun ChartScreen(vm: MainViewModel) {
                         DragLine(LineId.SL, s.sl, s.linesActive && s.slOn, ChartColors.Sl, "SL"),
                     )
                 }
-                val statics = remember(trade.positions, s.symbol, s.mode, s.editPosition, cur) {
+                val q = s.quote
+                val statics = remember(trade.positions, s.symbol, s.mode, s.editPosition, cur, q, calib) {
                     buildList {
                         trade.positions.filter { it.symbol == s.symbol && it.id != s.editPosition?.id }.forEach { p ->
+                            // 持仓线上的当前盈亏：随实时报价更新（平仓价 = BUY 用 Bid、SELL 用 Ask），无法计算时用服务器 profit
+                            val livePl = q?.let { qq -> ProfitCalc.profit(p.symbol, p.side, p.volume, p.openPrice,
+                                if (p.side == Side.BUY) qq.bid else qq.ask, mids, calib) } ?: p.profit
                             add(StaticLine(p.openPrice, if (p.side == Side.BUY) BuyBlue else SellRed,
-                                PositionLines.label(p, cur), positionId = p.id))
+                                PositionLines.label(p.copy(profit = livePl), cur), positionId = p.id))
                             if (s.mode == TicketMode.NONE) {
-                                p.takeProfit?.let { add(StaticLine(it, ChartColors.Tp, "tp #${p.id}")) }
-                                p.stopLoss?.let { add(StaticLine(it, ChartColors.Sl, "sl #${p.id}")) }
+                                p.takeProfit?.let { add(StaticLine(it, ChartColors.Tp, "tp #${p.id}", posTicket = p.id, kind = LineId.TP)) }
+                                p.stopLoss?.let { add(StaticLine(it, ChartColors.Sl, "sl #${p.id}", posTicket = p.id, kind = LineId.SL)) }
                             }
                         }
                     }
@@ -95,18 +103,24 @@ fun ChartScreen(vm: MainViewModel) {
                     trade.orders.filter { it.symbol == s.symbol && it.ticket != s.editOrder?.ticket }
                 }
                 val orderMove by vm.orderMove.collectAsState()
+                val positionMove by vm.positionMove.collectAsState()
                 TradingChart(
                     candles = s.candles, spec = spec, bid = s.quote?.bid, ask = s.quote?.ask, lines = lines,
                     side = s.effectiveSide, pendingMode = s.isPending, staticLines = statics,
                     onCommit = vm::commitLines, live = live,
                     viewportKey = s.symbol + "|" + s.timeframe, onNeedHistory = vm::loadOlderCandles,
-                    pnlLabel = { price, liveEntry -> ProfitCalc.format(pnl.at(price, liveEntry), cur) },
+                    pnlLabel = { price, liveEntry -> pnl.label(price, liveEntry, spec.point) },
                     onPositionTap = vm::openClosePanel,
                     orders = chartOrders, orderMove = orderMove?.takeIf { it.order.symbol == s.symbol },
                     onOrderMove = vm::proposeOrderMove, orderCheck = vm::checkOrderMove,
-                    orderPnl = { side, vol, open, close -> ProfitCalc.format(ProfitCalc.profit(s.symbol, side, vol, open, close, mids, calib), cur) },
+                    orderPnl = { side, vol, open, close -> ProfitCalc.pnlPoints(ProfitCalc.profit(s.symbol, side, vol, open, close, mids, calib), ProfitCalc.points(side, open, close, spec.point), cur) },
+                    positionPnl = { id, price -> trade.positions.firstOrNull { it.id == id }?.let { p ->
+                        ProfitCalc.pnlPoints(ProfitCalc.profit(p.symbol, p.side, p.volume, p.openPrice, price, mids, calib), ProfitCalc.points(p.side, p.openPrice, price, spec.point), cur) } },
+                    positionMove = positionMove?.takeIf { it.position.symbol == s.symbol },
+                    onPositionLineMove = vm::proposePositionMove, positionCheck = vm::checkPositionMove,
                 )
                 OrderMoveBar(vm, s, cur, mids, calib, Modifier.align(Alignment.BottomCenter))
+                PositionMoveBar(vm, s, cur, mids, calib, Modifier.align(Alignment.BottomCenter))
             } else {
                 CircularProgressIndicator(Modifier.align(Alignment.Center))
             }
@@ -120,8 +134,8 @@ fun ChartScreen(vm: MainViewModel) {
 }
 
 /**
- * K 线上点击持仓线 / ✕ 弹出的平仓面板：持仓信息、平仓手数、“平仓”确认按钮。
- * 服务端 /positions/{ticket}/close 不支持部分平仓 → 手数为只读（全部）；见 [ClosePlan]。
+ * K 线上点击持仓线 / ✕ 弹出的平仓面板（MT5 风格）：标题 “平仓 #ticket buy 0.10 EURUSD”，手数可编辑
+ * （默认全部手数，−/+ 按 volume_step 步进，按 volume_min / volume_step 校验），“平仓”确认按钮。
  */
 @Composable
 private fun ClosePositionDialog(vm: MainViewModel, trade: TradeState, cur: String) {
@@ -131,12 +145,15 @@ private fun ClosePositionDialog(vm: MainViewModel, trade: TradeState, cur: Strin
     // 持仓已不存在（已被平掉 / TP·SL 触发）→ 自动关闭面板
     LaunchedEffect(id, p == null, trade.loaded) { if (id != null && p == null && trade.loaded) vm.dismissClosePanel() }
     if (p == null) return
-    var volText by remember(p.id) { mutableStateOf(PositionLines.lots(p.volume)) }
-    val partial = ClosePlan.PARTIAL_SUPPORTED
+    val (vmin, vstep) = vm.closeVolumeLimits(p)
+    // 只按 ticket 记忆：持仓刷新（手数/盈亏变化）不会清空用户输入
+    var volText by remember(p.id) { mutableStateOf(ClosePlan.fmtVolume(p.volume, vstep)) }
+    val (vol, err) = ClosePlan.validate(p, volText, vmin, vstep)
+    val full = vol != null && ClosePlan.isFull(p, vol)
     AlertDialog(
         onDismissRequest = vm::dismissClosePanel,
         containerColor = PanelBg,
-        title = { Text("平仓 #${p.id}", color = Color.White) },
+        title = { Text(ClosePlan.title(p), color = Color.White, fontSize = 18.sp) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Row {
@@ -145,25 +162,30 @@ private fun ClosePositionDialog(vm: MainViewModel, trade: TradeState, cur: Strin
                         fontWeight = FontWeight.Bold, fontSize = 18.sp)
                 }
                 Text("开仓价 ${p.openPrice}    现价 ${p.currentPrice}", color = Muted, fontSize = 13.sp)
-                val pl = p.profit
-                Text("浮动盈亏 ${ProfitCalc.formatSigned(pl, cur)}", fontWeight = FontWeight.Bold, fontSize = 16.sp,
+                val pl = if (vol != null && !full) p.profit * vol / p.volume else p.profit
+                Text("${if (full || vol == null) "浮动盈亏" else "本次平仓盈亏"} ${ProfitCalc.formatSigned(pl, cur)}", fontWeight = FontWeight.Bold, fontSize = 16.sp,
                     color = if (pl >= 0) BuyBlue else SellRed)
-                Row(Modifier.fillMaxWidth().border(1.dp, FieldBorder, RoundedCornerShape(8.dp)).padding(start = 14.dp, end = 14.dp),
+                Row(Modifier.fillMaxWidth().border(1.dp, if (err != null) SellRed else FieldBorder, RoundedCornerShape(8.dp)).padding(start = 6.dp, end = 6.dp),
                     verticalAlignment = Alignment.CenterVertically) {
-                    Text("平仓手数", color = Color.White, fontSize = 15.sp, modifier = Modifier.weight(1f))
-                    BasicTextField(value = volText, onValueChange = { volText = it }, singleLine = true, enabled = partial,
-                        textStyle = TextStyle(color = if (partial) Color.White else Muted, fontWeight = FontWeight.Bold, fontSize = 16.sp, textAlign = TextAlign.End),
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), cursorBrush = SolidColor(Accent),
-                        modifier = Modifier.width(80.dp).padding(vertical = 12.dp))
-                    Text(" 手（全部）", color = Muted, fontSize = 13.sp)
+                    TextButton(onClick = { volText = ClosePlan.step(p, volText, -1, vmin, vstep) }, enabled = !busy) { Text("−", color = Accent, fontSize = 20.sp) }
+                    Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text("平仓手数", color = Muted, fontSize = 11.sp)
+                        BasicTextField(value = volText, onValueChange = { volText = it }, singleLine = true, enabled = !busy,
+                            textStyle = TextStyle(color = Color.White, fontWeight = FontWeight.Bold, fontSize = 18.sp, textAlign = TextAlign.Center),
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), cursorBrush = SolidColor(Accent),
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp))
+                    }
+                    TextButton(onClick = { volText = ClosePlan.step(p, volText, +1, vmin, vstep) }, enabled = !busy) { Text("+", color = Accent, fontSize = 20.sp) }
                 }
-                if (!partial) Text("服务器接口暂不支持部分平仓，将平掉全部手数", color = Muted, fontSize = 12.sp)
+                Text(err ?: if (full) "全部平仓" else "部分平仓：剩余 ${ClosePlan.fmtVolume(p.volume - (vol ?: 0.0), vstep)} 手",
+                    color = if (err != null) SellRed else Muted, fontSize = 12.sp)
+                Text("最小 ${ClosePlan.fmtVolume(vmin, vstep)} · 步长 ${ClosePlan.fmtVolume(vstep, vstep)}", color = Muted, fontSize = 11.sp)
             }
         },
         confirmButton = {
-            Button(onClick = { vm.confirmClosePanel(volText) }, enabled = !busy, shape = RoundedCornerShape(8.dp),
+            Button(onClick = { vm.confirmClosePanel(volText) }, enabled = !busy && vol != null, shape = RoundedCornerShape(8.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = SellRed), modifier = Modifier.height(46.dp)) {
-                Text(if (busy) "平仓中…" else "平仓", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                Text(if (busy) "平仓中…" else if (full) "平仓" else "部分平仓", fontSize = 16.sp, fontWeight = FontWeight.Bold)
             }
         },
         dismissButton = { TextButton(onClick = vm::dismissClosePanel, enabled = !busy) { Text("取消", color = Muted) } },
@@ -202,11 +224,43 @@ private fun OrderMoveBar(vm: MainViewModel, s: ChartState, cur: String, mids: Ma
     }
 }
 
+/** 图上拖动持仓 TP/SL 线松手后的确认条：旧价 → 新价 + 预计盈亏；确认前不调用服务器，取消后线回到原价 */
+@Composable
+private fun PositionMoveBar(vm: MainViewModel, s: ChartState, cur: String, mids: Map<String, Double>, calib: Double?, modifier: Modifier) {
+    val p by vm.positionMove.collectAsState()
+    val busy by vm.positionMoveBusy.collectAsState()
+    val m = p?.takeIf { it.position.symbol == s.symbol } ?: return
+    val pos = m.position
+    val pnl = ProfitCalc.format(ProfitCalc.profit(pos.symbol, pos.side, pos.volume, pos.openPrice, m.newPrice, mids, calib), cur)
+    Column(modifier.fillMaxWidth().padding(8.dp).background(Color(0xF0252A31), RoundedCornerShape(12.dp))
+        .border(1.dp, if (m.kind == LineId.TP) ChartColors.Tp else ChartColors.Sl, RoundedCornerShape(12.dp)).padding(horizontal = 12.dp, vertical = 8.dp)) {
+        Text("修改持仓 ${PositionLineMoves.kindName(m.kind)}", color = Muted, fontSize = 11.sp)
+        Text(PositionLineMoves.confirmText(m, s.spec), color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+        Text("触及该价预计盈亏 $pnl", color = Muted, fontSize = 11.sp)
+        Row(Modifier.fillMaxWidth().padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            OutlinedButton(onClick = vm::cancelPositionMove, enabled = !busy, modifier = Modifier.weight(1f).height(40.dp), shape = RoundedCornerShape(8.dp)) {
+                Text("取消", color = Muted)
+            }
+            Button(onClick = vm::confirmPositionMove, enabled = !busy, modifier = Modifier.weight(1f).height(40.dp), shape = RoundedCornerShape(8.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = Accent)) {
+                Text(if (busy) "修改中…" else "确认修改", fontWeight = FontWeight.Bold)
+            }
+        }
+    }
+}
+
 /** 预计盈亏上下文（USD） */
 class PnlCtx(val s: ChartState, val mids: Map<String, Double>, val calib: Double?, val currency: String) {
     fun at(price: Double, liveEntry: Double? = null): Double? {
         val st = if (liveEntry != null) s.copy(entry = liveEntry, stopLimit = if (s.pendingType?.isStopLimit == true) liveEntry else s.stopLimit) else s
         return st.pnlAt(price, mids, calib)
+    }
+    /** MT5 拖线标签数值：“+726.30 USD, 7263 points” */
+    fun label(price: Double, liveEntry: Double?, point: Double): String {
+        val st = if (liveEntry != null) s.copy(entry = liveEntry, stopLimit = if (s.pendingType?.isStopLimit == true) liveEntry else s.stopLimit) else s
+        val e = st.pnlEntry
+        val pts = if (e != null) ProfitCalc.points(st.effectiveSide, e, price, point) else 0L
+        return ProfitCalc.pnlPoints(at(price, liveEntry), pts, currency)
     }
 }
 
@@ -439,12 +493,20 @@ private fun pnlTint(v: Double?) = when { v == null -> Muted; v >= 0 -> Color(0xF
 /** MT5 风格 TP/SL 开关按钮：点亮=启用（显示线与输入框），再点熄灭=移除 */
 @Composable
 fun LevelToggle(text: String, on: Boolean, color: Color, modifier: Modifier = Modifier, onClick: () -> Unit) {
-    Box(modifier.height(36.dp).background(if (on) color else Color(0xFF2A2F36), RoundedCornerShape(18.dp))
-        .border(1.dp, if (on) color else FieldBorder, RoundedCornerShape(18.dp)).clickable(onClick = onClick)
+    // MT5 风格：未设置 = 灰色（无填充、灰边、灰字，表示未启用）；已设置 = 彩色填充（TP 绿 / SL 红）
+    val st = levelToggleStyle(on)
+    Box(modifier.height(36.dp).background(if (st.filled) color else Color.Transparent, RoundedCornerShape(18.dp))
+        .border(1.dp, if (st.filled) color else InactiveGray.copy(alpha = 0.6f), RoundedCornerShape(18.dp)).clickable(onClick = onClick)
         .padding(horizontal = 16.dp), contentAlignment = Alignment.Center) {
-        Text((if (on) "● " else "○ ") + text, color = if (on) Color.White else Muted, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+        Text((if (on) "● " else "○ ") + text, color = if (st.filled) Color.White else InactiveGray, fontWeight = if (on) FontWeight.Bold else FontWeight.Normal, fontSize = 14.sp)
     }
 }
+
+private val InactiveGray = Color(0xFF8A9099)
+
+/** TP/SL 按钮外观（纯逻辑，便于测试）：只有已设置 / 启用时才彩色填充 */
+data class LevelToggleStyle(val filled: Boolean)
+fun levelToggleStyle(on: Boolean) = LevelToggleStyle(filled = on)
 
 @Composable
 private fun TpSlToggles(s: ChartState, vm: MainViewModel) {

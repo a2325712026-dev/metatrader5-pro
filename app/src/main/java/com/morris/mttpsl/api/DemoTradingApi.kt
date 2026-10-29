@@ -235,6 +235,20 @@ class DemoTradingApi(autoTick: Boolean = true, seed: Int? = null, private val ti
         return TradeResult.Ok("TRADE_RETCODE_DONE")
     }
 
+    override suspend fun closePosition(positionId: String, volume: Double): TradeResult {
+        synchronized(lock) {
+            val i = positions.indexOfFirst { it.id == positionId }
+            if (i < 0) return TradeResult.Error("position not found")
+            val p = positions[i]
+            if (volume >= p.volume - 1e-9) { closeLocked(p); return TradeResult.Ok("TRADE_RETCODE_DONE") }
+            val part = p.copy(volume = volume, profit = p.profit * volume / p.volume)
+            closeLocked(part)
+            if (positions.none { it.id == positionId }) positions.add(i.coerceAtMost(positions.size), p.copy(volume = Math.round((p.volume - volume) * 1e8) / 1e8, profit = p.profit * (p.volume - volume) / p.volume))
+            else positions[positions.indexOfFirst { it.id == positionId }] = p.copy(volume = Math.round((p.volume - volume) * 1e8) / 1e8)
+        }
+        return TradeResult.Ok("TRADE_RETCODE_DONE")
+    }
+
     override suspend fun placePending(
         symbol: String, type: PendingType, volume: Double, price: Double, stopLimit: Double?,
         sl: Double?, tp: Double?, expiration: Expiration, comment: String,

@@ -16,7 +16,7 @@ python -m venv .venv
 .venv\Scripts\pip install -r requirements.txt
 copy .env.example .env
 ```
-3. 编辑 `.env`：`BRIDGE_API_KEY` 填长随机串（可用 `python -c "import secrets;print(secrets.token_urlsafe(32))"` 生成）；MT5_LOGIN/MT5_PASSWORD 可留空（使用终端里已登录的账户），也可填写。**.env 不要提交、不要发给任何人。**
+3. 编辑 `.env`：`BRIDGE_API_KEY` 可留空，之后运行 `python main.py --setup 服务器公网IP`（见 4.1）会自动生成并配好 HTTPS；也可自己填长随机串（可用 `python -c "import secrets;print(secrets.token_urlsafe(32))"` 生成）；MT5_LOGIN/MT5_PASSWORD 可留空（使用终端里已登录的账户），也可填写。**.env 不要提交、不要发给任何人。**
 4. 测试：`run.bat`，浏览器打开 http://127.0.0.1:8000/health 和 /docs。
 
 ## 3. 作为服务运行
@@ -36,38 +36,31 @@ nssm start MT5Bridge
 - Windows 防火墙只开放你实际使用的那一个端口，并在云厂商安全组里把来源限制为你自己的 IP（如可能）。
 - 所有请求需带 `X-API-Key` 头；API Key 要足够长且随机。
 
-### 4.1 启用 HTTPS（自签名证书 + 裸 IP，无需域名）/ Enable HTTPS (self-signed, bare IP)
-桥接服务自带 TLS：`.env` 里设置 `SSL_CERTFILE` 和 `SSL_KEYFILE`（两项必须同时设置；都留空 = 仍是纯 http，行为不变；相对路径按 `.env` 所在目录解析）。App v0.12+ 支持 https，并可用“HTTPS 证书指纹 (SHA-256)”只信任这一张自签名证书（证书固定）。
+### 4.1 启用 HTTPS（一键配置 + 连接码，无需域名）/ One-step HTTPS setup
+App v0.13 起**只支持 HTTPS**（`http://` 地址会被拒绝；v0.14 起首次连接自动记住证书）。每位用户在自己的服务器上运行一次 `--setup`，把打印出的**连接码**粘贴进 App 即可，不用手工处理证书和指纹：
 
-**打包版 exe（无需安装 Python）— 在 Windows 服务器上：**
-1. 先退出正在运行的 mt5-bridge。在 `mt5-bridge.exe` 所在文件夹（也就是 `.env` 所在文件夹）打开命令提示符 / PowerShell，运行（把 IP 换成服务器公网 IP，填你自己的，不要写进任何文档/代码）：
-   ```
-   .\mt5-bridge.exe --make-cert 203.0.113.10
-   ```
-   会在同目录生成 `cert.pem`（证书，有效期约 10 年，subjectAltName 含该 IP）和 `key.pem`（**私钥，不要外传**），并打印 **SHA-256 指纹**（形如 `AA:BB:…`，共 32 组）。把这一行复制保存好。已有证书时不会覆盖；确需重新生成请加 `--force`（之后 App 里的指纹必须同步更新）。
-2. 编辑 `.env`，加入（或把已有的空项填上）：
-   ```
-   HOST=0.0.0.0
-   PORT=8000
-   SSL_CERTFILE=cert.pem
-   SSL_KEYFILE=key.pem
-   ```
-3. 放行端口（管理员 PowerShell，端口与 `PORT` 一致）：
+1. **在服务器上运行**（IP 换成你服务器自己的公网 IP，不要写进任何文档 / 代码；下面的 `203.0.113.10` 只是示例）：
+   - 打包版 exe：在 `mt5-bridge.exe` 所在文件夹（也是 `.env` 所在文件夹）运行 `.\mt5-bridge.exe --setup 203.0.113.10`，或双击文件夹里的 `setup.bat` 按提示输入 IP。
+   - 源码版：`python main.py --setup 203.0.113.10`，或双击 `setup.bat`（`python setup.py [IP]`）。
+   它会一步完成：① `.env` 里没有 `BRIDGE_API_KEY` 时生成强随机密钥（已有的保留；`.env.example` 里的占位文字会被替换）；② `cert.pem` / `key.pem` 不存在时为该 IP 生成约 10 年的自签名证书（已有的保留，`--force` 才重新生成）；③ 写入 / 更新 `.env`：`BRIDGE_API_KEY`、`SSL_CERTFILE=cert.pem`、`SSL_KEYFILE=key.pem`、`HOST=0.0.0.0`、`PORT`（`--port` 或 `.env` 里已有的，默认 8000），其他行与注释原样保留；④ 打印一条**连接码**（`MT5PRO1:…`）和控制台二维码（`--no-qr` 关闭）。**不会打印私钥。**可以重复运行，连接码不变。
+2. **放行端口**（管理员 PowerShell，端口与 `PORT` 一致）：
    ```
    New-NetFirewallRule -DisplayName "MT5 Bridge HTTPS" -Direction Inbound -LocalPort 8000 -Protocol TCP -Action Allow
    ```
-   并在 **腾讯云控制台 → 云服务器 → 安全组 → 入站规则** 添加：协议 TCP、端口 8000（与 `PORT` 一致）、来源建议限制为你自己的公网 IP（不确定就先 0.0.0.0/0，之后再收紧）。Windows 防火墙和云安全组两处都要放行。
-4. 重新启动 `mt5-bridge.exe`。窗口里应显示 `监听地址: https://0.0.0.0:8000`、`HTTPS: 已启用` 和 `证书 SHA-256 指纹: …`（与第 1 步打印的一致）。在服务器上自测：`curl.exe -k https://127.0.0.1:8000/health` 应返回 `{"ok":true}`。
-5. 手机 App（v0.12+）→ 设置：服务器地址填 `https://服务器公网IP:8000`；**HTTPS 证书指纹 (SHA-256)** 粘贴第 1 步的指纹；API Key 不变；点“测试连接”。
+   并在云服务器安全组（如腾讯云：安全组 → 入站规则）添加 TCP 8000，来源建议限制为你自己的公网 IP。Windows 防火墙和云安全组两处都要放行。
+3. **启动 / 重启 `mt5-bridge`**。窗口会显示 `监听地址: https://0.0.0.0:8000`、证书指纹，以及再次打印的连接码。服务器上自测：`curl.exe -k https://127.0.0.1:8000/health` 应返回 `{"ok":true}`。
+4. **手机 App → 设置 → 填服务器地址和 API Key → 保存 → 测试连接。**只填这两项就够了：第一次测试连接成功时，App 会自动记住服务器的证书（无需手工填指纹）。也可以改用“导入连接码”一次填好（可选，在“高级”里）。
 
-**用 Python 运行（`run.bat` / NSSM）：** `.venv\Scripts\pip install -r requirements.txt`（含 `cryptography`），然后 `make-cert.bat 服务器公网IP`（或 `python make-cert.py 服务器公网IP [--out 目录] [--force]`），其余步骤相同。
+**连接码包含 API Key，等同于密码**：只发给你自己的手机，不要公开、不要放进群聊或截图。格式：`MT5PRO1:` + base64url(JSON `{"u": "https://IP:PORT", "k": "API Key", "f": "SHA-256 指纹"}`)。
 
-**注意：**
-- 启用 TLS 后这个端口只接受 https；旧版 App（v0.11 及以前）和 `http://` 地址将无法连接——请同时升级 App。
-- 指纹只对 https 地址生效；留空 = 使用系统信任的证书。若你有域名和正规证书（如 Let’s Encrypt），把 `SSL_CERTFILE` / `SSL_KEYFILE` 指向 fullchain / privkey，App 里指纹留空即可。
-- 如果 App 提示“HTTPS 证书指纹不匹配”，说明服务器出示的证书与设置里的不一致：确认是不是重新生成过证书；没改过却不匹配时不要继续使用（可能被中途拦截）。
+**其他说明：**
+- 仍可手动配置：在 App 里填 `https://IP:端口` 和 API Key，指纹放在“高级”里。`--make-cert <IP>`（或 `make-cert.py`）仍可单独使用，只生成证书并打印指纹。
+- 启用 TLS 后该端口只接受 https。App 里的 `http://` 地址一律被拒绝（提示“必须使用 HTTPS 地址”）。
+- 有域名和正规证书（如 Let’s Encrypt）时：把 `SSL_CERTFILE` / `SSL_KEYFILE` 指向 fullchain / privkey，App 里指纹留空（连接码里的指纹字段会是该证书的指纹，导入后可在“高级”里清空）。
+- 如果 App 提示“服务器证书与已记录的不一致”，说明服务器出示的证书与 App 已记录的不同：确认是不是重新生成过证书（是的话，在 App 里点“重置证书记录”再测试连接即可重新记住）；没改过却不匹配时不要继续使用（可能被中途拦截）。
+- 测试：`python -m unittest test_setup -v`（用真实 `main.py` 和 MetaTrader5 桩模块，验证连接码往返、指纹与 openssl 一致）。
 
-**English summary:** run `mt5-bridge.exe --make-cert <server-ip>` (or `python make-cert.py <server-ip>`) next to `.env` → it writes `cert.pem` / `key.pem` (10-year self-signed cert with the IP as subjectAltName) and prints the SHA-256 fingerprint. Add `SSL_CERTFILE=cert.pem`, `SSL_KEYFILE=key.pem` (and `HOST=0.0.0.0`) to `.env`, open the port in Windows Firewall **and** the Tencent Cloud security group, restart, then in the app use `https://<ip>:<port>` and paste the fingerprint into “HTTPS 证书指纹 (SHA-256)”. With both variables unset the bridge stays plain http.
+**English summary:** run `mt5-bridge.exe --setup <server-ip>` (or `python main.py --setup <server-ip>` / double-click `setup.bat`) next to `.env`. It generates a strong `BRIDGE_API_KEY` (if empty), a self-signed certificate (if missing), updates `.env` (`SSL_CERTFILE`, `SSL_KEYFILE`, `HOST=0.0.0.0`, `PORT`) and prints one **connection code** (`MT5PRO1:` + base64url JSON `{u,k,f}`) plus a console QR code; the private key is never printed. Open the port in Windows Firewall and the cloud security group, start the bridge, then in the app use Settings → 导入连接码 and paste. The code contains the API key – keep it private. The app only accepts HTTPS.
 
 ## 5. 接口
 | 方法 | 路径 | 说明 |
@@ -90,7 +83,7 @@ nssm start MT5Bridge
 | WS | /ws/ticks?symbol=EURUSD | 实时报价（symbol_info_tick 轮询 200ms） |
 
 ## 6. App 设置
-App 右上角“设置”→ 关闭演示模式 → 填写服务地址（如 https://服务器IP:8000 或 https://your.domain.com）和 API Key；自签名证书还要填“HTTPS 证书指纹 (SHA-256)” → 保存 → 测试连接。
+App 右上角“设置”→ 关闭演示模式 → 填写服务地址（如 https://服务器IP:8000 或 https://your.domain.com）和 API Key → 保存 → 测试连接（自签名证书会在第一次测试成功时自动记住，指纹可选，在“高级”里查看 / 重置）。
 
 ## 7. 已验证（2026-10-19，Linux + WineHQ 11 + MT5 + Windows Python 3.11，MetaQuotes-Demo 模拟账户）
 /health、/account、/symbol、/candles、/positions、WS 报价、市价买入 0.01 → 修改 TP/SL → 平仓，全部 retcode 10009 成功。
