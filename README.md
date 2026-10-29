@@ -3,7 +3,7 @@
 **English** | [简体中文](README.zh-CN.md)
 
 **💬 Telegram group:** https://t.me/metatrader5pro_chat_group  
-**☕ Donate (BSC / BEP20 & Ethereum / ERC20):** `0xB5f7e22fa69b5D88eeCc238A767b582d18CFF2bF`
+**☕ Donate (BSC / BEP20, Ethereum / ERC20, Base):** `0xB5f7e22fa69b5D88eeCc238A767b582d18CFF2bF`
 
 An Android app (Kotlin + Jetpack Compose) that replicates the look and feel of the MetaTrader 5 mobile app, plus two features the official mobile app does not offer:
 

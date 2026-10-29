@@ -3,7 +3,7 @@
 [English](README.md) | **简体中文**
 
 **💬 电报交流群：** https://t.me/metatrader5pro_chat_group  
-**☕ 打赏地址（BSC / BEP20 和 ETH / ERC20 通用）：** `0xB5f7e22fa69b5D88eeCc238A767b582d18CFF2bF`
+**☕ 打赏地址（BSC / BEP20、ETH / ERC20、Base 三链通用）：** `0xB5f7e22fa69b5D88eeCc238A767b582d18CFF2bF`
 
 一个用 Kotlin + Jetpack Compose 编写的 Android 应用，复刻 MetaTrader 5 手机端的界面与操作，并加入官方手机端没有的两个功能：
 
